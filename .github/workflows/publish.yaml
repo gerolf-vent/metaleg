@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/publish.yml
+      - .github/workflows/publish.yaml
       - cmd/**
       - container-image/**
       - internal/**
