@@ -141,23 +141,35 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 				errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
 			}
 
+			foundRejectRule := false
+
 			// Cleanup any conflicting or left-over reject rules for the current rule
 			for _, rejectRule := range rejectRules {
 				parsedRejectRule, ok := ParseIPTablesRejectRule(rejectRule[2:], ipt.Protocol())
-				if ok && strings.Contains(parsedRejectRule.SrcIPSetName, ruleHash) &&
-					parsedRejectRule.TransportProtocol == tp && // Only consider rules that match the rule hash and transport protocol
-					(!present || len(srcPorts) == 0 ||
-						isGWLocal || // If the gw node is local, it's always reachable, so no reject rule should exist
-						(isGWRouteKnown && isGWRouteAllocated) || // If the gw route is known and allocated, no reject rule should exist
-						!rule.MatchesIPTablesRejectRule(parsedRejectRule)) {
-					if _, err := ipt.DeleteRule(iptables.TableFilter, iptablesRejectChainName, rejectRule...); err != nil {
+				if ok && // Only consider valid reject rules (invalid ones are cleaned up by the full reconciliation)
+					strings.Contains(parsedRejectRule.SrcIPSetName, ruleHash) && // Check if the rule matches the current rule hash
+					parsedRejectRule.TransportProtocol == tp { // Only consider rules that match the transport protocol
+					// Then remove the rule if:
+					if !present || // The rule is absent
+						len(srcPorts) == 0 || // No ports are configured for the rule
+						isGWLocal || // The gw node is local (because we can SNAT directly)
+						(isGWRouteKnown && isGWRouteAllocated) || // The gw node is known and allocated (because we can route to it)
+						!rule.MatchesIPTablesRejectRule(parsedRejectRule) || // The rule does not match the desired state
+						foundRejectRule { // The rule is a duplicate
+						if _, err := ipt.DeleteRule(iptables.TableFilter, iptablesRejectChainName, rejectRule[2:]...); err != nil {
 						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+					}
+					} else if rule.MatchesIPTablesRejectRule(parsedRejectRule) {
+						foundRejectRule = true // The rule is present and matches the desired state, so we keep it
 					}
 				}
 			}
 
-			// Create a reject rule, if the gateway is not local and the route to it is unknown or not allocated
-			if present && len(srcPorts) > 0 && !isGWLocal && (!isGWRouteKnown || !isGWRouteAllocated) {
+			// Create a reject rule, if:
+			if present && // The rule should be present
+				len(srcPorts) > 0 && // There are source ports configured
+				!isGWLocal && (!isGWRouteKnown || !isGWRouteAllocated) && // This node cannot route to the gateway node
+				!foundRejectRule { // No matching reject rule exists
 				rejectRule := IPTablesRejectRule{
 					SrcIPSetName:      ipsetSrcName,
 					SrcPorts:          srcPorts,
@@ -180,23 +192,35 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 				errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
 			}
 
+			foundRTMarkRule := false
+
 			// Cleanup any conflicting or left-over rt mark rules for the current rule
 			for _, rtMarkRule := range rtMarkRules {
 				parsedRTMarkRule, ok := ParseIPTablesMarkRule(rtMarkRule[2:], ipt.Protocol())
-				if ok && strings.Contains(parsedRTMarkRule.SrcIPSetName, ruleHash) &&
-					parsedRTMarkRule.TransportProtocol == tp && // Only consider rules that match the rule hash and transport protocol
-					(!present || len(srcPorts) == 0 ||
-						isGWLocal || // If the gw node is local, there is no need to mark packets for routing
-						(!isGWRouteKnown || !isGWRouteAllocated) || // If the gw route is unknown or unallocated, the traffic should be rejected, not marked
-						!rule.MatchesIPTablesMarkRule(parsedRTMarkRule, uint32(iptm.fwMask))) {
-					if _, err := ipt.DeleteRule(iptables.TableMangle, iptablesRTMarkChainName, rtMarkRule...); err != nil {
+				if ok && // Only consider valid rt mark rules (invalid ones are cleaned up by the full reconciliation)
+					strings.Contains(parsedRTMarkRule.SrcIPSetName, ruleHash) && // Check if the rule matches the current rule hash
+					parsedRTMarkRule.TransportProtocol == tp { // Only consider rules that match the transport protocol
+					// Then remove the rule if:
+					if !present || // The rule is absent
+						len(srcPorts) == 0 || // No ports are configured for the rule
+						isGWLocal || // The gw node is local (because we can SNAT directly)
+						(!isGWRouteKnown || !isGWRouteAllocated) || // The gw node is unknown or not allocated (because we cannot route to it)
+						!rule.MatchesIPTablesMarkRule(parsedRTMarkRule, uint32(iptm.fwMask)) || // The rule does not match the desired state
+						foundRTMarkRule { // The rule is a duplicate
+						if _, err := ipt.DeleteRule(iptables.TableMangle, iptablesRTMarkChainName, rtMarkRule[2:]...); err != nil {
 						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+					}
+					} else if rule.MatchesIPTablesMarkRule(parsedRTMarkRule, uint32(iptm.fwMask)) {
+						foundRTMarkRule = true // The rule is present and matches the desired state, so we keep it
 					}
 				}
 			}
 
-			// Create a new rt mark rule, if the gateway is not local and the route to it is known and allocated
-			if present && len(srcPorts) > 0 && !isGWLocal && isGWRouteKnown && isGWRouteAllocated {
+			// Create a new rt mark rule, if:
+			if present && // The rule should be present
+				len(srcPorts) > 0 && // There are source ports configured
+				!isGWLocal && (isGWRouteKnown && isGWRouteAllocated) && // This node can route to the gateway node
+				!foundRTMarkRule { // No matching rt mark rule exists
 				rtMarkRule := IPTablesMarkRule{
 					SrcIPSetName:      ipsetSrcName,
 					SrcPorts:          srcPorts,
@@ -221,22 +245,34 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 				errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
 			}
 
+			foundSNATRule := false
+
 			// Cleanup any conflicting or left-over snat rules for the current rule
 			for _, snatRule := range snatRules {
 				parsedSNATRule, ok := ParseIPTablesSNATRule(snatRule[2:], ipt.Protocol())
-				if ok && strings.Contains(parsedSNATRule.SrcIPSetName, ruleHash) &&
-					parsedSNATRule.TransportProtocol == tp && // Only consider rules that match the rule hash and transport protocol
-					(!present || len(srcPorts) == 0 ||
-						!isGWLocal || // If the gw node is not local, no SNAT rule should exist
-						!rule.MatchesIPTablesSNATRule(parsedSNATRule)) {
-					if _, err := ipt.DeleteRule(iptables.TableNAT, iptablesSNATChainName, snatRule...); err != nil {
+				if ok && // Only consider valid SNAT rules (invalid ones are cleaned up by the full reconciliation)
+					strings.Contains(parsedSNATRule.SrcIPSetName, ruleHash) && // Check if the rule matches the current rule hash
+					parsedSNATRule.TransportProtocol == tp { // Only consider rules that match the transport protocol
+					// Then remove the rule if:
+					if !present || // The rule is absent
+						len(srcPorts) == 0 || // No ports are configured for the rule
+						!isGWLocal || // The gw node is not local (because we cannot SNAT directly)
+						!rule.MatchesIPTablesSNATRule(parsedSNATRule) || // The rule does not match the desired state
+						foundSNATRule { // The rule is a duplicate
+						if _, err := ipt.DeleteRule(iptables.TableNAT, iptablesSNATChainName, snatRule[2:]...); err != nil {
 						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+					}
+					} else if rule.MatchesIPTablesSNATRule(parsedSNATRule) {
+						foundSNATRule = true // The rule is present and matches the desired state, so we keep it
 					}
 				}
 			}
 
-			// Create a new SNAT rule, if the gateway is local
-			if present && len(srcPorts) > 0 && isGWLocal {
+			// Create a new SNAT rule, if:
+			if present && // The rule should be present
+				len(srcPorts) > 0 && // There are source ports configured
+				isGWLocal && // This node is the gateway node (because we can SNAT directly)
+				!foundSNATRule { // No matching SNAT rule exists
 				snatRule := IPTablesSNATRule{
 					SrcIPSetName:      ipsetSrcName,
 					SrcPorts:          srcPorts,
@@ -248,7 +284,6 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 					errs = append(errs, fmt.Errorf("failed to ensure iptables rule: %w", err))
 				}
 			}
-		}
 
 		//
 		// Sync IPSet entries (second half)
@@ -299,7 +334,7 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 				}
 			}
 			if !ruleValid {
-				if _, err := ipt.DeleteRule(iptables.TableFilter, iptablesRejectChainName, rejectRule...); err != nil {
+				if _, err := ipt.DeleteRule(iptables.TableFilter, iptablesRejectChainName, rejectRule[2:]...); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete unknown iptables rule: %w", err))
 				}
 			}
@@ -326,7 +361,7 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 				}
 			}
 			if !ruleValid {
-				if _, err := ipt.DeleteRule(iptables.TableMangle, iptablesRTMarkChainName, rtMarkRule...); err != nil {
+				if _, err := ipt.DeleteRule(iptables.TableMangle, iptablesRTMarkChainName, rtMarkRule[2:]...); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete unknown iptables rule: %w", err))
 				}
 			}
@@ -353,7 +388,7 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 				}
 			}
 			if !ruleValid {
-				if _, err := ipt.DeleteRule(iptables.TableNAT, iptablesSNATChainName, snatRule...); err != nil {
+				if _, err := ipt.DeleteRule(iptables.TableNAT, iptablesSNATChainName, snatRule[2:]...); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete unknown iptables rule: %w", err))
 				}
 			}
