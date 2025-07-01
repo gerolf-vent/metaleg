@@ -39,7 +39,7 @@ jobs:
           signing-key-path: ./build/melange.rsa
           repository-path: ./build/packages
           source-dir: ${{ github.workspace }}
-      - uses: chainguard-images/actions/apko-build@v1.4.3
+      - uses: chainguard-images/actions/apko-publish@v1.0.0
         id: apko
         with:
           archs: amd64
