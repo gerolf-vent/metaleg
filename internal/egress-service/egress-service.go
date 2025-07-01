@@ -10,7 +10,6 @@ import (
 
 	fm "github.com/gerolf-vent/metaleg/internal/firewall-manager"
 	rm "github.com/gerolf-vent/metaleg/internal/route-manager"
-	"github.com/gerolf-vent/metaleg/internal/utils/set"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -97,7 +96,7 @@ func (es *EgressService) Start(ctx context.Context) error {
 	}
 }
 
-func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcIPv4, srcIPv6 []net.IP, srcTCPPorts set.Set[uint16], srcUDPPorts set.Set[uint16], gwNodeName string) error {
+func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcIPv4, srcIPv6 []net.IP, gwNodeName string) error {
 	es.Lock()
 	defer es.Unlock()
 
@@ -129,20 +128,16 @@ func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcI
 		rule.SNATIPv6 = lbIPv6
 		rule.SrcIPv4s = srcIPv4
 		rule.SrcIPv6s = srcIPv6
-		rule.SrcTCPPorts = srcTCPPorts
-		rule.SrcUDPPorts = srcUDPPorts
 		rule.GWNodeName = gwNodeName
 	} else {
 		// Create a new rule if it does not exist
 		rule = &fm.EgressRule{
-			ID:          id,
-			SNATIPv4:    lbIPv4,
-			SNATIPv6:    lbIPv6,
-			SrcIPv4s:    srcIPv4,
-			SrcIPv6s:    srcIPv6,
-			SrcTCPPorts: srcTCPPorts,
-			SrcUDPPorts: srcUDPPorts,
-			GWNodeName:  gwNodeName,
+			ID:         id,
+			SNATIPv4:   lbIPv4,
+			SNATIPv6:   lbIPv6,
+			SrcIPv4s:   srcIPv4,
+			SrcIPv6s:   srcIPv6,
+			GWNodeName: gwNodeName,
 		}
 		es.rules[id] = rule
 	}

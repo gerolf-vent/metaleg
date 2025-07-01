@@ -8,26 +8,21 @@ import (
 
 	rm "github.com/gerolf-vent/metaleg/internal/route-manager"
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
-	"github.com/gerolf-vent/metaleg/internal/utils/set"
 )
 
 type EgressRule struct {
-	ID          string          // Unique identifier for the egress rule (namespaced service name)
-	SrcIPv4s    []net.IP        // Source IPv4 addresses from Pods
-	SrcIPv6s    []net.IP        // Source IPv6 addresses from Pods
-	SrcTCPPorts set.Set[uint16] // List of source tcp ports to match for egress traffic
-	SrcUDPPorts set.Set[uint16] // List of source udp ports to match for egress traffic
-	SNATIPv4    net.IP          // SNAT IPv4 address for egress traffic
-	SNATIPv6    net.IP          // SNAT IPv6 address for egress traffic
-	GWNodeName  string          // Name of the gateway node for egress traffic
-	GWRoute     *rm.NodeRoute   // Gateway route for egress traffic
+	ID         string        // Unique identifier for the egress rule (namespaced service name)
+	SrcIPv4s   []net.IP      // Source IPv4 addresses from Pods
+	SrcIPv6s   []net.IP      // Source IPv6 addresses from Pods
+	SNATIPv4   net.IP        // SNAT IPv4 address for egress traffic
+	SNATIPv6   net.IP        // SNAT IPv6 address for egress traffic
+	GWNodeName string        // Name of the gateway node for egress traffic
+	GWRoute    *rm.NodeRoute // Gateway route for egress traffic
 }
 
 func NewEgressRule(id string) *EgressRule {
 	return &EgressRule{
-		ID:          id,
-		SrcTCPPorts: set.New[uint16](),
-		SrcUDPPorts: set.New[uint16](),
+		ID: id,
 	}
 }
 
@@ -62,27 +57,6 @@ func (r *EgressRule) MatchesIPTablesSNATRule(iptRule *IPTablesSNATRule) bool {
 
 	// Check whether the rule targets the correct IP set
 	if !strings.Contains(iptRule.SrcIPSetName, ruleHashID) {
-		return false
-	}
-
-	// Determine src ports to consider
-	var srcPorts set.Set[uint16]
-	switch iptRule.TransportProtocol {
-	case iptables.TCP:
-		srcPorts = r.SrcTCPPorts
-	case iptables.UDP:
-		srcPorts = r.SrcUDPPorts
-	default:
-		return false // Unsupported transport protocol
-	}
-
-	// An empty list of src ports can't match any rule
-	if len(srcPorts) == 0 {
-		return false
-	}
-
-	// Check if the source ports match
-	if !iptRule.SrcPorts.Equals(srcPorts) {
 		return false
 	}
 
@@ -135,27 +109,6 @@ func (r *EgressRule) MatchesIPTablesMarkRule(iptRule *IPTablesMarkRule, fwMask u
 		return false
 	}
 
-	// Determine src ports to consider
-	var srcPorts set.Set[uint16]
-	switch iptRule.TransportProtocol {
-	case iptables.TCP:
-		srcPorts = r.SrcTCPPorts
-	case iptables.UDP:
-		srcPorts = r.SrcUDPPorts
-	default:
-		return false // Unsupported transport protocol
-	}
-
-	// An empty list of src ports can't match any rule
-	if len(srcPorts) == 0 {
-		return false
-	}
-
-	// Check if the source ports match
-	if !iptRule.SrcPorts.Equals(srcPorts) {
-		return false
-	}
-
 	return true
 }
 
@@ -177,27 +130,6 @@ func (r *EgressRule) MatchesIPTablesRejectRule(iptRule *IPTablesRejectRule) bool
 
 	// Check whether the rule targets the correct IP set
 	if !strings.Contains(iptRule.SrcIPSetName, ruleHashID) {
-		return false
-	}
-
-	// Determine src ports to consider
-	var srcPorts set.Set[uint16]
-	switch iptRule.TransportProtocol {
-	case iptables.TCP:
-		srcPorts = r.SrcTCPPorts
-	case iptables.UDP:
-		srcPorts = r.SrcUDPPorts
-	default:
-		return false // Unsupported transport protocol
-	}
-
-	// An empty list of src ports can't match any rule
-	if len(srcPorts) == 0 {
-		return false
-	}
-
-	// Check if the source ports match
-	if !iptRule.SrcPorts.Equals(srcPorts) {
 		return false
 	}
 

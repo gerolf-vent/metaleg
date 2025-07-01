@@ -2,13 +2,9 @@ package metaleg
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"strconv"
-	"strings"
 
 	es "github.com/gerolf-vent/metaleg/internal/egress-service"
-	"github.com/gerolf-vent/metaleg/internal/utils/set"
 	metallbv1beta1 "go.universe.tf/metallb/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -23,8 +19,6 @@ const (
 	labelRewriteSourceIP     = "metaleg.de/rewriteSrcIP"
 	labelMLBServiceName      = "metallb.io/service-name"
 	labelMLBServiceNamespace = "metallb.io/service-namespace"
-	annotationEgressTCPPorts = "metaleg.de/tcpPorts"
-	annotationEgressUDPPorts = "metaleg.de/udpPorts"
 )
 
 type serviceController struct {
@@ -128,49 +122,6 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	// Determine egress tcp ports from annotations
-	srcTCPPorts := set.New[uint16]()
-	tcpPortsStr, exists := svc.Annotations[annotationEgressTCPPorts] // Already checked for existence above
-	if exists {
-		for _, portStr := range strings.Split(tcpPortsStr, ",") {
-			portStr = strings.TrimSpace(portStr)
-			if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
-				srcTCPPorts.Add(uint16(port))
-			} else {
-				err := fmt.Errorf("invalid port number: %s", portStr)
-				logger.Error(err, "Failed to parse egress tcp port")
-				return ctrl.Result{}, reconcile.TerminalError(err)
-			}
-		}
-	}
-
-	// Determine egress udp ports from annotations
-	srcUDPPorts := set.New[uint16]()
-	udpPortsStr, exists := svc.Annotations[annotationEgressUDPPorts] // Already checked for existence above
-	if exists {
-		for _, portStr := range strings.Split(udpPortsStr, ",") {
-			portStr = strings.TrimSpace(portStr)
-			if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
-				srcUDPPorts.Add(uint16(port))
-			} else {
-				err := fmt.Errorf("invalid port number: %s", portStr)
-				logger.Error(err, "Failed to parse egress udp port")
-				return ctrl.Result{}, reconcile.TerminalError(err)
-			}
-		}
-	}
-
-	if len(srcTCPPorts) == 0 && len(srcUDPPorts) == 0 {
-		// If the service does not have any ports configured, remove any egress rules associated with it
-		err := c.es.DeleteEgressRule(req.NamespacedName.String())
-		if err != nil {
-			logger.Error(err, "Failed to delete egress rule from egress service")
-			return ctrl.Result{}, err
-		}
-		logger.Info("Service reconciled successfully", "state", "ports-unconfigured")
-		return ctrl.Result{}, nil // No ports specified, nothing to do
-	}
-
 	// Determine the IPs to use for SNAT
 	var lbIPv4 net.IP
 	var lbIPv6 net.IP
@@ -211,10 +162,10 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		gwNodeName = sl2s.Items[0].Status.Node
 	}
 
-	if err := c.es.UpdateEgressRule(req.NamespacedName.String(), lbIPv4, lbIPv6, srcIPv4s, srcIPv6s, srcTCPPorts, srcUDPPorts, gwNodeName); err != nil {
+	if err := c.es.UpdateEgressRule(req.NamespacedName.String(), lbIPv4, lbIPv6, srcIPv4s, srcIPv6s, gwNodeName); err != nil {
 		logger.Error(err, "Failed to update egress rule on egress service")
 		return ctrl.Result{}, err
 	}
-	logger.Info("Service reconciled successfully", "state", "present", "lbIPv4", lbIPv4, "lbIPv6", lbIPv6, "srcIPv4s", srcIPv4s, "srcIPv6s", srcIPv6s, "srcTCPPorts", srcTCPPorts, "srcUDPPorts", srcUDPPorts, "gwNodeName", gwNodeName)
+	logger.Info("Service reconciled successfully", "state", "present", "lbIPv4", lbIPv4, "lbIPv6", lbIPv6, "srcIPv4s", srcIPv4s, "srcIPv6s", srcIPv6s, "gwNodeName", gwNodeName)
 	return ctrl.Result{}, nil
 }
