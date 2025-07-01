@@ -78,6 +78,35 @@ func (iptm *IPTablesManager) Setup() error {
 		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptables.ChainPostrouting, "-j", iptablesSNATChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s NAT POSTROUTING rule: %w", ipt.Protocol(), err)
 		}
+
+		snatSkipRule := &IPTablesSNATSkipRule{
+			FWMask: iptm.fwMask,
+		}
+
+		postroutingRules, err := ipt.ListRules(iptables.TableNAT, iptables.ChainPostrouting)
+		if err != nil {
+			return fmt.Errorf("failed to list %s NAT POSTROUTING rules: %w", ipt.Protocol(), err)
+		}
+
+		// If the first rule in the postrouting chain is not our SNAT-skip rule,
+		// then cleanup any existing SNAT-skip rules, so we can insert it as the first rule.
+		if len(postroutingRules) > 0 {
+			parsedSNATSkipRule, ok := ParseIPTablesSNATSkipRule(postroutingRules[0][2:])
+			if !ok || parsedSNATSkipRule.FWMask != snatSkipRule.FWMask {
+				for _, rule := range postroutingRules {
+					_, ok := ParseIPTablesSNATSkipRule(rule[2:])
+					if ok {
+						if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, rule[2:]...); err != nil {
+							return fmt.Errorf("failed to delete conflicting %s NAT SNAP-skip rule: %w", ipt.Protocol(), err)
+						}
+					}
+				}
+			}
+		}
+
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptables.ChainPostrouting, snatSkipRule.Spec()...); err != nil {
+			return fmt.Errorf("failed to ensure %s NAT SNAT-skip rule: %w", ipt.Protocol(), err)
+		}
 	}
 
 	return nil

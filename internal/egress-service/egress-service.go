@@ -67,6 +67,11 @@ func (es *EgressService) Start(ctx context.Context) error {
 			es.Lock()
 			logger.Info("Running reconciliation for egress service")
 
+			// Setup route manager again
+			if err := es.routeManager.Setup(); err != nil {
+				logger.Error(err, "Failed to setup route manager")
+			}
+
 			// Garbage collect node routes that are no longer present
 			if err := es.routeManager.CleanupNodeRoutes(es.nodes); err != nil {
 				logger.Error(err, "Failed to cleanup node routes")
@@ -77,6 +82,11 @@ func (es *EgressService) Start(ctx context.Context) error {
 				if err := es.routeManager.ReconcileNodeRoute(nodeRoute, true); err != nil {
 					logger.Error(err, "Failed to reconcile node route", "nodeName", nodeRoute.Name)
 				}
+			}
+
+			// Setup firewall manager again
+			if err := es.firewallManager.Setup(); err != nil {
+				logger.Error(err, "Failed to setup firewall manager")
 			}
 
 			// Garbage collect egress rules that are no longer present
