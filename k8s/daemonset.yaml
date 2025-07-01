@@ -27,7 +27,7 @@ spec:
       hostPID: true
       containers:
       - name: metaleg-agent
-        image: ghcr.io/gerolf-vent/metaleg-agent:v0.1.0
+        image: ghcr.io/gerolf-vent/metaleg-agent:0.1.0
         imagePullPolicy: Always
         securityContext:
           capabilities:
