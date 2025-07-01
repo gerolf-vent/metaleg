@@ -1,0 +1,27 @@
+package:
+  name: metaleg-agent
+  version: 0.1.0
+  epoch: 0
+  description: Egress controller for MetalLB
+  target-architecture:
+    - all
+  copyright:
+    - license: Apache-2.0
+      paths:
+        - "*"
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/edge/main
+      - https://dl-cdn.alpinelinux.org/alpine/edge/community
+    packages:
+      - alpine-base
+      - go
+
+pipeline:
+- name: Build
+  runs: |
+    mkdir -p ${{targets.destdir}}/usr/bin
+    CGO_ENABLED=0 go build -o ${{targets.destdir}}/usr/bin/metaleg-agent ./cmd/metaleg-agent/main.go
+ 

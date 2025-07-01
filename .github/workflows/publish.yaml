@@ -1,0 +1,48 @@
+name: release
+concurrency: release
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+      - cmd/**
+      - container-image/**
+      - internal/**
+      - go.mod
+      - go.sum
+jobs:
+  build:
+    name: Release container image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: none
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+      - shell: bash
+        run: |
+          mkdir -p ./build
+      - id: manifest
+        run: |
+          wget -qO ./build/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          chmod +x ./build/yq
+          echo "version=$(./build/yq eval '.package.version' ./container-image/melange.yaml)" >> $GITHUB_OUTPUT
+          echo "version_full=$(./build/yq eval '.package.version + "-r" + (.package.epoch // 0)' ./container-image/melange.yaml)" >> $GITHUB_OUTPUT
+      - uses: chainguard-dev/actions/melange-build@v1.4.3
+        id: melange
+        with:
+          archs: x86_64
+          config: ./container-image/melange.yaml
+          sign-with-temporary-key: true
+          signing-key-path: ./build/melange.rsa
+          repository-path: ./build/packages
+          source-dir: ${{ github.workspace }}
+      - uses: chainguard-images/actions/apko-build@v1.4.3
+        id: apko
+        with:
+          archs: amd64
+          config: ./container-image/apko.yaml
+          tag: "ghcr.io/${{ github.repository }}/metaleg-agent:${{ steps.manifest.outputs.version_full }} ghcr.io/${{ github.repository }}/metaleg-agent:${{ steps.manifest.outputs.version }} ghcr.io/${{ github.repository }}/metaleg-agent:latest"
+          keyring-append: ./build/melange.rsa.pub
