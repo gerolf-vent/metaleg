@@ -99,18 +99,21 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 		ipsetSrcName := ipsetSrcPrefix + ruleHash
 		var ipsetProto ipset.Protocol
 		var snatIP net.IP
+		var srcIPs []net.IP
 
 		if ipt.IsIPv6() {
 			ipsetSrcName = "inet6:" + ipsetSrcName
 			ipsetProto = ipset.IPv6
 			snatIP = rule.SNATIPv6
+			srcIPs = rule.SrcIPv6s
 		} else {
 			ipsetProto = ipset.IPv4
 			snatIP = rule.SNATIPv4
+			srcIPs = rule.SrcIPv4s
 		}
 
 		//
-		// Sync FW ip set (first half)
+		// Sync FW ip set (1/3)
 		//
 
 		// Ensure the ipset exists if there are any rules to apply, so they don't throw errors,
@@ -157,8 +160,8 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 						!rule.MatchesIPTablesRejectRule(parsedRejectRule) || // The rule does not match the desired state
 						foundRejectRule { // The rule is a duplicate
 						if _, err := ipt.DeleteRule(iptables.TableFilter, iptablesRejectChainName, rejectRule[2:]...); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
-					}
+							errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+						}
 					} else if rule.MatchesIPTablesRejectRule(parsedRejectRule) {
 						foundRejectRule = true // The rule is present and matches the desired state, so we keep it
 					}
@@ -208,8 +211,8 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 						!rule.MatchesIPTablesMarkRule(parsedRTMarkRule, uint32(iptm.fwMask)) || // The rule does not match the desired state
 						foundRTMarkRule { // The rule is a duplicate
 						if _, err := ipt.DeleteRule(iptables.TableMangle, iptablesRTMarkChainName, rtMarkRule[2:]...); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
-					}
+							errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+						}
 					} else if rule.MatchesIPTablesMarkRule(parsedRTMarkRule, uint32(iptm.fwMask)) {
 						foundRTMarkRule = true // The rule is present and matches the desired state, so we keep it
 					}
@@ -260,8 +263,8 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 						!rule.MatchesIPTablesSNATRule(parsedSNATRule) || // The rule does not match the desired state
 						foundSNATRule { // The rule is a duplicate
 						if _, err := ipt.DeleteRule(iptables.TableNAT, iptablesSNATChainName, snatRule[2:]...); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
-					}
+							errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+						}
 					} else if rule.MatchesIPTablesSNATRule(parsedSNATRule) {
 						foundSNATRule = true // The rule is present and matches the desired state, so we keep it
 					}
@@ -285,8 +288,40 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 				}
 			}
 
+			//
+			// Sync IPSet entries (2/3)
+			//
+
+			presentIPs, err := iptm.ips.ListEntries(ipsetSrcName)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to list ipset entries: %w", err))
+			} else {
+				for _, presentSrcIP := range presentIPs {
+					foundSrcIP := false
+					for _, srcIP := range srcIPs {
+						if presentSrcIP.Equal(srcIP) {
+							foundSrcIP = true
+							break
+						}
+					}
+					if !foundSrcIP {
+						// Remove the src IP from the ipset, if it is not present in the rule anymore
+						if _, err := iptm.ips.DeleteEntry(ipsetSrcName, presentSrcIP); err != nil {
+							errs = append(errs, fmt.Errorf("failed to delete ipset entry: %w", err))
+						}
+					}
+				}
+
+				for _, srcIP := range srcIPs {
+					if _, err := iptm.ips.EnsureEntry(ipsetSrcName, srcIP); err != nil {
+						errs = append(errs, fmt.Errorf("failed to ensure ipset entry: %w", err))
+					}
+				}
+			}
+		}
+
 		//
-		// Sync IPSet entries (second half)
+		// Sync IPSet entries (3/3)
 		//
 
 		// Delete the ipset, if all rules are absent
