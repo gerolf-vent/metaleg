@@ -66,7 +66,6 @@ func (es *EgressService) Start(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			es.Lock()
-			defer es.Unlock()
 			logger.Info("Running reconciliation for egress service")
 
 			// Garbage collect node routes that are no longer present
@@ -92,6 +91,8 @@ func (es *EgressService) Start(ctx context.Context) error {
 					logger.Error(err, "Failed to reconcile egress rule", "ruleID", rule.ID)
 				}
 			}
+
+			es.Unlock()
 		}
 	}
 }
