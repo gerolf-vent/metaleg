@@ -67,7 +67,7 @@ func (iptm *IPTablesManager) Setup() error {
 			return fmt.Errorf("failed to ensure %s filter chain: %w", ipt.Protocol(), err)
 		}
 
-		if _, err := ipt.EnsureRule(iptables.Append, iptables.TableFilter, iptables.ChainForward, "-j", iptablesRejectChainName); err != nil {
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableFilter, iptables.ChainForward, "-j", iptablesRejectChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s filter FORWARD rule: %w", ipt.Protocol(), err)
 		}
 
@@ -75,7 +75,7 @@ func (iptm *IPTablesManager) Setup() error {
 			return fmt.Errorf("failed to ensure %s NAT chain: %w", ipt.Protocol(), err)
 		}
 
-		if _, err := ipt.EnsureRule(iptables.Append, iptables.TableNAT, iptables.ChainPostrouting, "-j", iptablesSNATChainName); err != nil {
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptables.ChainPostrouting, "-j", iptablesSNATChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s NAT POSTROUTING rule: %w", ipt.Protocol(), err)
 		}
 	}
