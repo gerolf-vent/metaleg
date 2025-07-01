@@ -40,6 +40,47 @@ func (nlm *NetlinkManager) Setup() error {
 	return nil
 }
 
+func (nlm *NetlinkManager) Cleanup() error {
+	var errs []error
+
+	routeTableIDMin := int(nlm.routeTableIDOffset)
+	routeTableIDMax := int(uint(nlm.routeTableIDOffset) + nlm.fwMask.Size() - 1)
+
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		// Query all existing netlink rules for the family
+		nlRules, err := netlink.RuleList(family)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list netlink rules: %w", err))
+		} else {
+			// Cleanup any left-over rules
+			for _, r := range nlRules {
+				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax {
+					if err := netlink.RuleDel(&r); err != nil {
+						errs = append(errs, fmt.Errorf("failed to delete netlink rule: %w", err))
+					}
+				}
+			}
+		}
+
+		// Query all existing netlink routes for the family
+		nlRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{}, 0)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list netlink routes: %w", err))
+		} else {
+			// Cleanup any left-over routes
+			for _, r := range nlRoutes {
+				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax {
+					if err := netlink.RouteDel(&r); err != nil {
+						errs = append(errs, fmt.Errorf("failed to delete netlink route: %w", err))
+					}
+				}
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) error {
 	if route == nil {
 		return nil

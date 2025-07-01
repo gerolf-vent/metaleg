@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"strconv"
 	"time"
@@ -21,6 +22,9 @@ import (
 )
 
 func main() {
+	runCleanup := flag.Bool("cleanup", false, "Cleanup any left-over rules and exit")
+	flag.Parse()
+
 	devMode := false
 	devModeEnv := os.Getenv("DEV_MODE")
 	if devModeEnv == "true" {
@@ -112,6 +116,25 @@ func main() {
 			logger.Error(err, "Invalid GC_INTERVAL")
 			os.Exit(1)
 		}
+	}
+
+	if *runCleanup {
+		logger.Info("Running in cleanup mode")
+
+		exitCode := 0
+
+		if err := firewallManager.Cleanup(); err != nil {
+			logger.Error(err, "Failed to cleanup firewall rules")
+			exitCode = 1
+		}
+
+		if err := routeManager.Cleanup(); err != nil {
+			logger.Error(err, "Failed to cleanup route rules")
+			exitCode = 1
+		}
+
+		logger.Info("Cleanup finished, exiting")
+		os.Exit(exitCode)
 	}
 
 	cfg := ctrl.GetConfigOrDie()

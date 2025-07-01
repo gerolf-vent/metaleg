@@ -112,6 +112,53 @@ func (iptm *IPTablesManager) Setup() error {
 	return nil
 }
 
+func (iptm *IPTablesManager) Cleanup() error {
+	var errs []error
+
+	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+		if _, err := ipt.DeleteRule(iptables.TableMangle, iptables.ChainPrerouting, "-j", iptablesRTMarkChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s mangle PREROUTING rule: %w", ipt.Protocol(), err))
+		}
+
+		if _, err := ipt.DeleteChain(iptables.TableMangle, iptablesRTMarkChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s mangle chain: %w", ipt.Protocol(), err))
+		}
+
+		if _, err := ipt.DeleteRule(iptables.TableFilter, iptables.ChainForward, "-j", iptablesRejectChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s filter FORWARD rule: %w", ipt.Protocol(), err))
+		}
+
+		if _, err := ipt.DeleteChain(iptables.TableFilter, iptablesRejectChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s filter chain: %w", ipt.Protocol(), err))
+		}
+
+		if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, "-j", iptablesSNATChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s NAT POSTROUTING rule: %w", ipt.Protocol(), err))
+		}
+
+		if _, err := ipt.DeleteChain(iptables.TableNAT, iptablesSNATChainName); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete %s NAT chain: %w", ipt.Protocol(), err))
+		}
+
+		postroutingRules, err := ipt.ListRules(iptables.TableNAT, iptables.ChainPostrouting)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list %s NAT POSTROUTING rules: %w", ipt.Protocol(), err))
+		} else {
+			// Cleanup any SNAT-skip rules that are left over in the POSTROUTING chain.
+			for _, rule := range postroutingRules {
+				_, ok := ParseIPTablesSNATSkipRule(rule[2:])
+				if ok {
+					if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, rule[2:]...); err != nil {
+						errs = append(errs, fmt.Errorf("failed to delete %s NAT SNAT-skip rule: %w", ipt.Protocol(), err))
+					}
+				}
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool) error {
 	if rule == nil {
 		return nil
