@@ -11,16 +11,5 @@ contents:
   - iptables
   - ipset
 
-accounts:
-  groups:
-    - groupname: metaleg
-      gid: 65532
-  users:
-    - username: metaleg
-      uid: 65532
-      gid: 65532
-      shell: /bin/sh
-  run-as: metaleg
-
 entrypoint:
   command: metaleg-agent
