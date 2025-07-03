@@ -27,6 +27,8 @@ type EgressService struct {
 
 	firewallManager fm.FirewallManager // Interface to manage firewall rules
 	routeManager    rm.RouteManager    // Interface to manage node routes
+
+	isReady bool // Indicates if the service is ready to process requests
 }
 
 func New(nodeName string, reconciliationInterval time.Duration, firewallManager fm.FirewallManager, routeManager rm.RouteManager) (*EgressService, error) {
@@ -41,6 +43,8 @@ func New(nodeName string, reconciliationInterval time.Duration, firewallManager 
 }
 
 func (es *EgressService) Start(ctx context.Context) error {
+	es.Lock()
+
 	logger := ctrl.LoggerFrom(ctx)
 	logger.Info("Starting egress service")
 
@@ -53,6 +57,10 @@ func (es *EgressService) Start(ctx context.Context) error {
 	if err := es.routeManager.Setup(); err != nil {
 		return fmt.Errorf("failed to setup route manager: %w", err)
 	}
+
+	es.isReady = true // Mark the service as ready to process requests
+
+	es.Unlock()
 
 	// Periodically run reconciliation to ensure the egress rules and node routes are up-to-date
 	ticker := time.NewTicker(es.reconciliationInterval)
@@ -104,6 +112,13 @@ func (es *EgressService) Start(ctx context.Context) error {
 			es.Unlock()
 		}
 	}
+}
+
+func (es *EgressService) IsReady() bool {
+	es.RLock()
+	defer es.RUnlock()
+
+	return es.isReady
 }
 
 func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcIPv4, srcIPv6 []net.IP, gwNodeName string) error {

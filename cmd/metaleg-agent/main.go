@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -187,6 +189,23 @@ func main() {
 
 	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace); err != nil {
 		logger.Error(err, "Failed to attach service controller")
+		os.Exit(1)
+	}
+
+	if err := mgr.AddReadyzCheck("egress-service", func(req *http.Request) error {
+		if !es.IsReady() {
+			return errors.New("egress service not ready")
+		}
+		return nil
+	}); err != nil {
+		logger.Error(err, "Failed to add readiness check")
+		os.Exit(1)
+	}
+
+	if err := mgr.AddHealthzCheck("egress-service", func(req *http.Request) error {
+		return nil
+	}); err != nil {
+		logger.Error(err, "Failed to add health check")
 		os.Exit(1)
 	}
 
