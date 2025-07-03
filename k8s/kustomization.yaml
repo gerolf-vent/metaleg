@@ -8,6 +8,6 @@ resources:
 labels:
   - pairs:
       app.kubernetes.io/name: metaleg
-      app.kubernetes.io/version: "0.1.0"
+      app.kubernetes.io/version: "0.1.1"
       app.kubernetes.io/component: agent
     includeSelectors: true
