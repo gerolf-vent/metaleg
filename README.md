@@ -25,6 +25,8 @@ The controller is configured via environment variables:
 | ROUTE_BACKEND | `netlink` | Route backend to use for rerouting traffic to specific nodes |
 | ROUTE_TABLE_ID_OFFSET | `100000` | Starting point to allocate routing table ids |
 | RECONCILIATION_INTERVAL | `5m` | Time interval for full reconciliation and garbage collection |
+| METRICS_BIND_ADDRESS | `:21793` | Bind address for Prometheus metrics (use `0` to disable) |
+| HEALTH_PROBE_BIND_ADDRESS | `:21794` | Bind address for Health probes (use `0` to disable) |
 
 ### Firewall backends
 | Name | Description |

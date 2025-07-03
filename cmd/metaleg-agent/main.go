@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	metallbv1beta1 "go.universe.tf/metallb/api/v1beta1"
 
@@ -137,6 +138,16 @@ func main() {
 		os.Exit(exitCode)
 	}
 
+	metricsBindAddress := os.Getenv("METRICS_BIND_ADDRESS")
+	if metricsBindAddress == "" {
+		metricsBindAddress = ":21793" // Default metrics bind address
+	}
+
+	healthProbeBindAddress := os.Getenv("HEALTH_PROBE_BIND_ADDRESS")
+	if healthProbeBindAddress == "" {
+		healthProbeBindAddress = ":21794" // Default health probe bind address
+	}
+
 	cfg := ctrl.GetConfigOrDie()
 
 	scheme := runtime.NewScheme()
@@ -148,6 +159,10 @@ func main() {
 		Scheme:         scheme,
 		LeaderElection: false, // this is a node agent, no leader election needed
 		Logger:         logger,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsBindAddress,
+		},
+		HealthProbeBindAddress: healthProbeBindAddress,
 	})
 	if err != nil {
 		logger.Error(err, "Failed to create controller manager")
