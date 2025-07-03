@@ -9,6 +9,10 @@ spec:
     matchLabels:
       app.kubernetes.io/name: metaleg
       app.kubernetes.io/component: agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
   template:
     metadata:
       labels:
@@ -25,15 +29,52 @@ spec:
         operator: Exists
       hostNetwork: true
       hostPID: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: metaleg-agent
         image: ghcr.io/gerolf-vent/metaleg-agent:0.1.0
         imagePullPolicy: Always
         securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
+            drop:
+            - ALL
             add:
             - NET_ADMIN
             - NET_RAW
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        ports:
+        - containerPort: 21793
+          name: metrics
+          protocol: TCP
+        - containerPort: 21794
+          name: health
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 21794
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 21794
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
         env:
         - name: NODE_NAME
           valueFrom:
@@ -53,3 +94,9 @@ spec:
           value: "netlink"
         - name: RECONCILIATION_INTERVAL
           value: "5m"
+        - name: METRICS_BIND_ADDRESS
+          value: ":21793"
+        - name: HEALTH_PROBE_BIND_ADDRESS
+          value: ":21794"
+      terminationGracePeriodSeconds: 30
+      priorityClassName: system-node-critical
