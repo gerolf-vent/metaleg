@@ -71,3 +71,6 @@ Because this controller currently uses firewall marks and routes on the standart
 | --- | ------ | ----- |
 | [kube-router](https://kube-router.io) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
 | [Cilium](https://cilium.io) | Not working |
+
+## Testing
+For running all Go tests, you can use the `docker-compose.yaml` provided. It will start a container with all dependencies installed and the `NET_ADMIN` capability enabled (required for iptables/ipset tests). You can start the tests with `docker compose run --rm go-test` or `podman-compose up`.

@@ -1,0 +1,9 @@
+FROM alpine:latest
+
+RUN apk add --no-cache \
+    go \
+    ipset \
+    iptables \
+    iproute2
+
+CMD ["/bin/sh", "-c", "go test ./..."]
