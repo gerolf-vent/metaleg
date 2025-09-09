@@ -81,7 +81,7 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				logger.Error(err2, "Failed to delete egress rule from egress service")
 				return ctrl.Result{}, err2
 			}
-			logger.Info("Service reconciled successfully", "state", "absent")
+			logger.Info("Service reconciled successfully", "state", "absent", "reason", "object not found")
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get Service from K8s API")
@@ -95,7 +95,7 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(err, "Failed to delete egress rule from egress service")
 			return ctrl.Result{}, err
 		}
-		logger.Info("Service reconciled successfully", "state", "absent")
+		logger.Info("Service reconciled successfully", "state", "absent", "reason", "label not set")
 		return ctrl.Result{}, nil
 	}
 
@@ -111,7 +111,7 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(err, "Failed to delete egress rule from egress service")
 			return ctrl.Result{}, err
 		}
-		logger.Info("Service reconciled successfully", "state", "absent")
+		logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoint slices found")
 		return ctrl.Result{}, nil
 	}
 
