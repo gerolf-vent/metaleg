@@ -143,14 +143,12 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var srcIPv4s, srcIPv6s []net.IP
 	for _, slice := range slices.Items {
 		for _, ep := range slice.Endpoints {
-			if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-				for _, address := range ep.Addresses {
-					ip := net.ParseIP(address)
-					if ip.To4() != nil && slice.AddressType == discoveryv1.AddressTypeIPv4 {
-						srcIPv4s = append(srcIPv4s, ip)
-					} else if ip.To16() != nil && slice.AddressType == discoveryv1.AddressTypeIPv6 {
-						srcIPv6s = append(srcIPv6s, ip)
-					}
+			for _, address := range ep.Addresses {
+				ip := net.ParseIP(address)
+				if ip.To4() != nil && slice.AddressType == discoveryv1.AddressTypeIPv4 {
+					srcIPv4s = append(srcIPv4s, ip)
+				} else if ip.To16() != nil && slice.AddressType == discoveryv1.AddressTypeIPv6 {
+					srcIPv6s = append(srcIPv6s, ip)
 				}
 			}
 		}
