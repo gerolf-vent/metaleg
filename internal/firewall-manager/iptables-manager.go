@@ -16,23 +16,25 @@ const (
 	iptablesRejectChainName = "METALEG-REJECT"
 	iptablesSNATChainName   = "METALEG-SNAT"
 	ipsetSrcPrefix          = "METALEG-SRC-"
-	iptablesRuleIDPrefix    = "METALEG-SVC-"
+	ipsetExcludeDstName     = "METALEG-EXCLUDE-DST"
 )
 
 type IPTablesManager struct {
-	nodeName string             // Name of the node this manager is running on
-	fwMask   uint32             // Firewall mask for egress rules
-	ipt4     *iptables.IPTables // IPv4 iptables interface
-	ipt6     *iptables.IPTables // IPv6 iptables interface
-	ips      *ipset.IPSet       // IPSet interface
+	nodeName        string             // Name of the node this manager is running on
+	fwMask          uint32             // Firewall mask for egress rules
+	excludeDstCIDRs []net.IPNet        // CIDRs to exclude from firewall rules (and therefore traffic redirection)
+	ipt4            *iptables.IPTables // IPv4 iptables interface
+	ipt6            *iptables.IPTables // IPv6 iptables interface
+	ips             *ipset.IPSet       // IPSet interface
 }
 
-func NewIPTablesManager(nodeName string, fwMask uint32) (*IPTablesManager, error) {
+func NewIPTablesManager(nodeName string, fwMask uint32, excludeDstCIDRs []net.IPNet) (*IPTablesManager, error) {
 	var err error
 
 	iptm := &IPTablesManager{
-		nodeName: nodeName,
-		fwMask:   fwMask,
+		nodeName:        nodeName,
+		fwMask:          fwMask,
+		excludeDstCIDRs: excludeDstCIDRs,
 	}
 
 	iptm.ipt4, err = iptables.New(iptables.IPv4)
@@ -55,8 +57,63 @@ func NewIPTablesManager(nodeName string, fwMask uint32) (*IPTablesManager, error
 
 func (iptm *IPTablesManager) Setup() error {
 	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+		ipsetProtocol := ipset.Protocol(ipt.Protocol())
+
+		if _, err := iptm.ips.EnsureNetworkSet(ipsetExcludeDstName, ipsetProtocol); err != nil {
+			return fmt.Errorf("failed to ensure %s exclude dst ipset: %w", ipsetProtocol, err)
+		}
+
+		existingExcludeCIDRs, err := iptm.ips.ListNetworkEntries(ipsetExcludeDstName)
+		if err != nil {
+			return fmt.Errorf("failed to list %s exclude dst ipset entries: %w", ipsetProtocol, err)
+		}
+		for _, existingCIDR := range existingExcludeCIDRs {
+			found := false
+			for _, cidr := range iptm.excludeDstCIDRs {
+				if existingCIDR.String() == cidr.String() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if _, err := iptm.ips.DeleteNetworkEntry(ipsetExcludeDstName, &existingCIDR); err != nil {
+					return fmt.Errorf("failed to delete stale %s exclude dst ipset entry: %w", ipsetProtocol, err)
+				}
+			}
+		}
+		for _, cidr := range iptm.excludeDstCIDRs {
+			switch ipsetProtocol {
+			case ipset.IPv4:
+				if cidr.IP.To4() == nil {
+					continue
+				}
+			case ipset.IPv6:
+				if cidr.IP.To16() == nil || cidr.IP.To4() != nil {
+					continue
+				}
+			}
+			if _, err := iptm.ips.EnsureNetworkEntry(ipsetExcludeDstName, &cidr); err != nil {
+				return fmt.Errorf("failed to ensure %s exclude dst ipset entry: %w", ipsetProtocol, err)
+			}
+		}
+
+		excludeCIDRsRule := IPTablesExcludeCIDRsRule{
+			IPSetName: ipsetExcludeDstName,
+			Protocol:  ipt.Protocol(),
+		}
+
+		for _, cidr := range iptm.excludeDstCIDRs {
+			if _, err := iptm.ips.EnsureNetworkEntry(ipsetExcludeDstName, &cidr); err != nil {
+				return fmt.Errorf("failed to ensure %s exclude dst ipset entry: %w", ipsetProtocol, err)
+			}
+		}
+
 		if _, err := ipt.EnsureChain(iptables.TableMangle, iptablesRTMarkChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s mangle chain: %w", ipt.Protocol(), err)
+		}
+
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableMangle, iptablesRTMarkChainName, excludeCIDRsRule.Spec()...); err != nil {
+			return fmt.Errorf("failed to ensure %s exclude dst rule in mangle chain: %w", ipt.Protocol(), err)
 		}
 
 		if _, err := ipt.EnsureRule(iptables.Append, iptables.TableMangle, iptables.ChainPrerouting, "-j", iptablesRTMarkChainName); err != nil {
@@ -73,6 +130,10 @@ func (iptm *IPTablesManager) Setup() error {
 
 		if _, err := ipt.EnsureChain(iptables.TableNAT, iptablesSNATChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s NAT chain: %w", ipt.Protocol(), err)
+		}
+
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptablesSNATChainName, excludeCIDRsRule.Spec()...); err != nil {
+			return fmt.Errorf("failed to ensure %s exclude dst rule in NAT chain: %w", ipt.Protocol(), err)
 		}
 
 		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptables.ChainPostrouting, "-j", iptablesSNATChainName); err != nil {
@@ -439,6 +500,10 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 
 		// Cleanup any left-over rt mark rules that do not match any rule ID
 		for _, rtMarkRule := range rtMarkRules {
+			if _, ok := ParseIPTablesExcludeCIDRsRule(rtMarkRule, ipt.Protocol()); ok {
+				continue // Skip the exclude CIDRs rule
+			}
+
 			parsedRTMarkRule, ok := ParseIPTablesMarkRule(rtMarkRule, ipt.Protocol())
 			ruleValid := false
 			if ok {
@@ -466,6 +531,10 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 
 		// Cleanup any left-over snat rules that do not match any rule ID
 		for _, snatRule := range snatRules {
+			if _, ok := ParseIPTablesExcludeCIDRsRule(snatRule, ipt.Protocol()); ok {
+				continue // Skip the exclude CIDRs rule
+			}
+
 			parsedSNATRule, ok := ParseIPTablesSNATRule(snatRule, ipt.Protocol())
 			ruleValid := false
 			if ok {
