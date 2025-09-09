@@ -20,6 +20,7 @@ The controller is configured via environment variables:
 | ---- | ------- | ----------- |
 | NODE_NAME | - | Hostname of the K8s node the agent is running on |
 | METALLB_NAMESPACE | `metallb-system` | Namespace where MetalLB is running in |
+| FILTER_ENDPOINTS_FOR_NODE | `true` | Whether to only redirect traffic from pod ips on the same node or all pod ips. |
 | FIREWALL_BACKEND | `iptables` | Firewall backend to use for SNAT rules and marking packages |
 | FIREWALL_MASK | `0x00F00000` | Firewall mask to use for marking packages (must be continous) |
 | ROUTE_BACKEND | `netlink` | Route backend to use for rerouting traffic to specific nodes |

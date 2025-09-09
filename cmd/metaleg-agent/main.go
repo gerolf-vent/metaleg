@@ -53,6 +53,16 @@ func main() {
 		mlbNamespace = "metallb-system" // Default namespace for MetalLB
 	}
 
+	filterForNode := true
+	filterForNodeEnv := os.Getenv("FILTER_ENDPOINTS_FOR_NODE")
+	if filterForNodeEnv != "" {
+		filterForNode, err = strconv.ParseBool(filterForNodeEnv)
+		if err != nil {
+			logger.Error(err, "Failed to parse env var FILTER_ENDPOINTS_FOR_NODE", "value", filterForNodeEnv)
+			os.Exit(1)
+		}
+	}
+
 	fwMask := utils.FWMask(0x00F00000) // Default FW mask
 	fwMaskEnv := os.Getenv("FIREWALL_MASK")
 	if fwMaskEnv != "" {
@@ -187,7 +197,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace); err != nil {
+	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace, nodeName, filterForNode); err != nil {
 		logger.Error(err, "Failed to attach service controller")
 		os.Exit(1)
 	}
@@ -209,7 +219,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting agent", "nodeName", nodeName, "firewallMask", fwMask, "routeTableIDOffset", routeTableIDOffset, "firewallBackend", fmBackend, "routeBackend", rmBackend, "reconciliationInterval", reconciliationInterval)
+	logger.Info("Starting agent", "nodeName", nodeName, "firewallMask", fwMask, "routeTableIDOffset", routeTableIDOffset, "firewallBackend", fmBackend, "routeBackend", rmBackend, "reconciliationInterval", reconciliationInterval, "filterEndpointsForNode", filterForNode)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		logger.Error(err, "Agent stopped unexpectedly")
 		os.Exit(1)

@@ -22,16 +22,20 @@ const (
 )
 
 type serviceController struct {
-	client       client.Client
-	es           *es.EgressService
-	mlbNamespace string
+	client        client.Client
+	es            *es.EgressService
+	mlbNamespace  string
+	nodeName      string
+	filterForNode bool
 }
 
-func AttachServiceController(mgr ctrl.Manager, es *es.EgressService, mlbNamespace string) error {
+func AttachServiceController(mgr ctrl.Manager, es *es.EgressService, mlbNamespace string, nodeName string, filterForNode bool) error {
 	c := &serviceController{
-		client:       mgr.GetClient(),
-		es:           es,
-		mlbNamespace: mlbNamespace,
+		client:        mgr.GetClient(),
+		es:            es,
+		mlbNamespace:  mlbNamespace,
+		nodeName:      nodeName,
+		filterForNode: filterForNode,
 	}
 
 	// EndpointSlice -> Service mapper
@@ -139,10 +143,22 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Get src ips to use for SNAT
+	// Get gateway node name
+	gwNodeName := ""
+	if len(sl2s.Items) > 0 {
+		gwNodeName = sl2s.Items[0].Status.Node
+	}
+
+	// Filter for endpoints on this node and get their src ips to use for SNAT
 	var srcIPv4s, srcIPv6s []net.IP
 	for _, slice := range slices.Items {
 		for _, ep := range slice.Endpoints {
+			// If filtering for node, skip endpoints not on this node
+			// But always include all endpoints, if this is a gateway node, because traffic is
+			// identified by the pods src ip.
+			if gwNodeName != c.nodeName && c.filterForNode && (ep.NodeName == nil || *ep.NodeName != c.nodeName) {
+				continue
+			}
 			for _, address := range ep.Addresses {
 				ip := net.ParseIP(address)
 				if ip.To4() != nil && slice.AddressType == discoveryv1.AddressTypeIPv4 {
@@ -154,10 +170,18 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Get gateway node name
-	gwNodeName := ""
-	if len(sl2s.Items) > 0 {
-		gwNodeName = sl2s.Items[0].Status.Node
+	if len(srcIPv4s) == 0 && len(srcIPv6s) == 0 {
+		err := c.es.DeleteEgressRule(req.NamespacedName.String())
+		if err != nil {
+			logger.Error(err, "Failed to delete egress rule from egress service")
+			return ctrl.Result{}, err
+		}
+		if c.filterForNode {
+			logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoints on this node")
+		} else {
+			logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoints found")
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if err := c.es.UpdateEgressRule(req.NamespacedName.String(), lbIPv4, lbIPv6, srcIPv4s, srcIPv6s, gwNodeName); err != nil {
