@@ -2,15 +2,8 @@ name: publish
 concurrency: publish
 on:
   push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/publish.yaml
-      - cmd/**
-      - container-image/**
-      - internal/**
-      - go.mod
-      - go.sum
+    tags:
+      - 'v*.*.*'
 jobs:
   build:
     name: Publish container image
