@@ -127,7 +127,16 @@ func (ipt *IPTables) ChainExists(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
-	return ipt.check(table, chain)
+	args := []string{"-t", string(table), "-L", string(chain)}
+	err := ipt.run(args)
+	if err != nil {
+		if strings.Contains(err.Error(), "No chain/target/match by that name") {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (ipt *IPTables) EnsureChain(table Table, chain Chain) (bool, error) {
