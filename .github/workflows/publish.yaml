@@ -2,15 +2,8 @@ name: publish
 concurrency: publish
 on:
   push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/publish.yaml
-      - cmd/**
-      - container-image/**
-      - internal/**
-      - go.mod
-      - go.sum
+    tags:
+      - 'v*.*.*'
 jobs:
   build:
     name: Publish container image
@@ -28,7 +21,12 @@ jobs:
         run: |
           wget -qO ./build/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           chmod +x ./build/yq
-          echo "version=$(./build/yq eval '.package.version' ./container-image/melange.yaml)" >> $GITHUB_OUTPUT
+          VERSION="$(./build/yq eval '.package.version' ./container-image/melange.yaml)"
+          VERSION_1="$(echo "$VERSION" | cut -d. -f1)"
+          VERSION_2="$VERSION_1.$(echo "$VERSION" | cut -d. -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_1=$VERSION_1" >> $GITHUB_OUTPUT
+          echo "version_2=$VERSION_2" >> $GITHUB_OUTPUT
           echo "version_full=$(./build/yq eval '.package.version + "-r" + (.package.epoch // 0)' ./container-image/melange.yaml)" >> $GITHUB_OUTPUT
       - uses: chainguard-dev/actions/melange-build@v1.4.3
         id: melange
@@ -44,5 +42,5 @@ jobs:
         with:
           archs: amd64
           config: ./container-image/apko.yaml
-          tag: "ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_full }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:latest"
+          tag: "ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_full }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_1 }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_2 }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:latest"
           keyring-append: ./build/melange.rsa.pub

@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  go-test:
+    build:
+      context: .
+      dockerfile: container-image/Dockerfile.test
+    container_name: go-test
+    working_dir: /src
+    volumes:
+      - .:/src
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - sh
+      - -c  
+      - |
+        echo "Test environment:"
+        uname -a
+        go version
+        ip -V
+        ipset --version
+        iptables --version
+
+        echo
+        echo "Running tests..."
+        go test -v ./...

@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"flag"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	metaleg "github.com/gerolf-vent/metaleg/internal"
@@ -53,6 +55,16 @@ func main() {
 		mlbNamespace = "metallb-system" // Default namespace for MetalLB
 	}
 
+	filterForNode := true
+	filterForNodeEnv := os.Getenv("FILTER_ENDPOINTS_FOR_NODE")
+	if filterForNodeEnv != "" {
+		filterForNode, err = strconv.ParseBool(filterForNodeEnv)
+		if err != nil {
+			logger.Error(err, "Failed to parse env var FILTER_ENDPOINTS_FOR_NODE", "value", filterForNodeEnv)
+			os.Exit(1)
+		}
+	}
+
 	fwMask := utils.FWMask(0x00F00000) // Default FW mask
 	fwMaskEnv := os.Getenv("FIREWALL_MASK")
 	if fwMaskEnv != "" {
@@ -65,6 +77,33 @@ func main() {
 		logger.Info("FIREWALL_MASK env var not set, using default value", "value", fwMask)
 	}
 
+	fwExcludeDstCIDRs := []net.IPNet{
+		// IPv4 private address spaces
+		{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+		{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
+		{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
+		// IPv4 link-local addresses
+		{IP: net.IPv4(169, 254, 0, 0), Mask: net.CIDRMask(16, 32)},
+
+		// IPv6 unique local addresses
+		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
+		// IPv6 link-local addresses
+		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
+	}
+	fwExcludeDstCIDRsEnv := os.Getenv("FIREWALL_EXCLUDE_DST_CIDRS")
+	if fwExcludeDstCIDRsEnv != "" {
+		fwExcludeDstCIDRsEnvSplitted := strings.Split(fwExcludeDstCIDRsEnv, ",")
+		fwExcludeDstCIDRs = make([]net.IPNet, 0, len(fwExcludeDstCIDRsEnvSplitted))
+		for _, cidrStr := range fwExcludeDstCIDRsEnvSplitted {
+			_, cidr, err := net.ParseCIDR(strings.TrimSpace(cidrStr))
+			if err != nil {
+				logger.Error(err, "Failed to parse env var FIREWALL_EXCLUDE_DST_CIDRS", "value", cidrStr)
+				os.Exit(1)
+			}
+			fwExcludeDstCIDRs = append(fwExcludeDstCIDRs, *cidr)
+		}
+	}
+
 	fmBackend := os.Getenv("FIREWALL_BACKEND")
 	if fmBackend == "" {
 		fmBackend = "iptables" // Default firewall backend
@@ -73,7 +112,7 @@ func main() {
 	var firewallManager fm.FirewallManager
 	switch fmBackend {
 	case "iptables":
-		firewallManager, err = fm.NewIPTablesManager(nodeName, uint32(fwMask))
+		firewallManager, err = fm.NewIPTablesManager(nodeName, uint32(fwMask), fwExcludeDstCIDRs)
 		if err != nil {
 			logger.Error(err, "Failed to create iptables manager")
 			os.Exit(1)
@@ -187,7 +226,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace); err != nil {
+	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace, nodeName, filterForNode); err != nil {
 		logger.Error(err, "Failed to attach service controller")
 		os.Exit(1)
 	}
@@ -209,7 +248,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting agent", "nodeName", nodeName, "firewallMask", fwMask, "routeTableIDOffset", routeTableIDOffset, "firewallBackend", fmBackend, "routeBackend", rmBackend, "reconciliationInterval", reconciliationInterval)
+	logger.Info("Starting agent", "nodeName", nodeName, "firewallMask", fwMask, "routeTableIDOffset", routeTableIDOffset, "firewallBackend", fmBackend, "routeBackend", rmBackend, "reconciliationInterval", reconciliationInterval, "filterEndpointsForNode", filterForNode, "firewallExcludeDstCIDRs", fwExcludeDstCIDRs)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		logger.Error(err, "Agent stopped unexpectedly")
 		os.Exit(1)
