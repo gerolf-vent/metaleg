@@ -13,54 +13,30 @@ type IPTablesSNATRule struct {
 }
 
 func ParseIPTablesSNATRule(spec []string, protocol iptables.Protocol) (*IPTablesSNATRule, bool) {
-	parsedRule := &IPTablesSNATRule{
+	r := &IPTablesSNATRule{
 		Protocol: protocol,
 	}
 
-	if len(spec) != 9 {
-		return nil, false // Expected format is 9 parts
+	ruleParser := iptables.NewIPTablesSpecParser([][]string{
+		{"-m", "set"},
+		{"--match-set", "{setName}", "src"},
+		{"-j", "SNAT", "--to", "{snatIP}"},
+	})
+
+	values, ok := ruleParser.Parse(spec)
+	if !ok {
+		return nil, false
 	}
 
-	var module string
-	for i := 0; i < len(spec); i++ {
-		switch spec[i] {
-		case "-m":
-			if len(spec) < i+2 { // -m requires one argument
-				return nil, false
-			}
-			module = spec[i+1]
-			i += 1
-		case "--match-set":
-			if module != "set" {
-				return nil, false // Only valid for set module
-			}
-			if len(spec) < i+3 { // --match-set requires two arguments
-				return nil, false
-			}
-			if spec[i+2] != "src" {
-				return nil, false // Only interested in source IP sets
-			}
-			parsedRule.SrcIPSetName = spec[i+1]
-			i += 2
-		case "-j":
-			if len(spec) < i+4 { // -j SNAT requires at least two further arguments
-				return nil, false
-			}
-			if spec[i+1] != "SNAT" || spec[i+2] != "--to" {
-				return nil, false // Only interested in SNAT rules
-			}
-			snatIP := net.ParseIP(spec[i+3])
-			if snatIP == nil {
-				return nil, false // Invalid SNAT IP address
-			}
-			parsedRule.SNATIP = snatIP
-			i += 3
-		default:
-			return nil, false // Unrecognized part of the spec
-		}
-	}
+	r.SrcIPSetName = values["setName"]
 
-	return parsedRule, true
+	snatIP := net.ParseIP(values["snatIP"])
+	if snatIP == nil {
+		return nil, false
+	}
+	r.SNATIP = snatIP
+
+	return r, true
 }
 
 func (r *IPTablesSNATRule) Spec() []string {

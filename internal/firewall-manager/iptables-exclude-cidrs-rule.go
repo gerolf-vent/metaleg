@@ -10,49 +10,24 @@ type IPTablesExcludeCIDRsRule struct {
 }
 
 func ParseIPTablesExcludeCIDRsRule(spec []string, protocol iptables.Protocol) (*IPTablesExcludeCIDRsRule, bool) {
-	parsedRule := &IPTablesExcludeCIDRsRule{
+	r := &IPTablesExcludeCIDRsRule{
 		Protocol: protocol,
 	}
 
-	if len(spec) != 7 {
-		return nil, false // Expected format is 7 parts
+	ruleParser := iptables.NewIPTablesSpecParser([][]string{
+		{"-m", "set"},
+		{"--match-set", "{setName}", "dst"},
+		{"-j", "RETURN"},
+	})
+
+	values, ok := ruleParser.Parse(spec)
+	if !ok {
+		return nil, false
 	}
 
-	var module string
-	for i := 0; i < len(spec); i++ {
-		switch spec[i] {
-		case "-m":
-			if len(spec) < i+2 { // -m requires one argument
-				return nil, false
-			}
-			module = spec[i+1]
-			i += 1
-		case "--match-set":
-			if module != "set" {
-				return nil, false // Only valid for set module
-			}
-			if len(spec) < i+3 { // --match-set requires two arguments
-				return nil, false
-			}
-			if spec[i+2] != "dst" {
-				return nil, false // Only interested in destination IP sets
-			}
-			parsedRule.IPSetName = spec[i+1]
-			i += 2
-		case "-j":
-			if len(spec) < i+2 {
-				return nil, false
-			}
-			if spec[i+1] != "RETURN" {
-				return nil, false // Only interested in RETURN rules
-			}
-			i += 1
-		default:
-			return nil, false // Unrecognized part of the spec
-		}
-	}
+	r.IPSetName = values["setName"]
 
-	return parsedRule, true
+	return r, true
 }
 
 func (r *IPTablesExcludeCIDRsRule) Spec() []string {
