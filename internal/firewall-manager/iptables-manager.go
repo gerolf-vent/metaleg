@@ -102,12 +102,6 @@ func (iptm *IPTablesManager) Setup() error {
 			Protocol:  ipt.Protocol(),
 		}
 
-		for _, cidr := range iptm.excludeDstCIDRs {
-			if _, err := iptm.ips.EnsureNetworkEntry(ipsetExcludeDstName, &cidr); err != nil {
-				return fmt.Errorf("failed to ensure %s exclude dst ipset entry: %w", ipsetProtocol, err)
-			}
-		}
-
 		if _, err := ipt.EnsureChain(iptables.TableMangle, iptablesRTMarkChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s mangle chain: %w", ipt.Protocol(), err)
 		}
