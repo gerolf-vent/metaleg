@@ -23,7 +23,7 @@ The controller is configured via environment variables:
 | FILTER_ENDPOINTS_FOR_NODE | `true` | Whether to only redirect traffic from pod ips on the same node or all pod ips. |
 | FIREWALL_BACKEND | `iptables` | Firewall backend to use for SNAT rules and marking packages |
 | FIREWALL_MASK | `0x00F00000` | Firewall mask to use for marking packages (must be continous) |
-| FIREWALL_EXCLUDE_DST_CIDRS | `10.0.0.0/8, 176.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10` | Comma separated list of CIDRs to exclude from rerouting and masquerading (e.g. cluster pod/service CIDRs) |
+| FIREWALL_EXCLUDE_DST_CIDRS | `10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10` | Comma separated list of CIDRs to exclude from rerouting and masquerading (e.g. cluster pod/service CIDRs) |
 | ROUTE_BACKEND | `netlink` | Route backend to use for rerouting traffic to specific nodes |
 | ROUTE_TABLE_ID_OFFSET | `100000` | Starting point to allocate routing table ids |
 | RECONCILIATION_INTERVAL | `5m` | Time interval for full reconciliation and garbage collection |
