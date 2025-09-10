@@ -16,7 +16,7 @@ const (
 	iptablesRejectChainName = "METALEG-REJECT"
 	iptablesSNATChainName   = "METALEG-SNAT"
 	ipsetSrcPrefix          = "METALEG-SRC-"
-	ipsetExcludeDstName     = "METALEG-EXCLUDE-DST"
+	ipsetExcludeDstPrefix   = "METALEG-EXCLUDE-DST-"
 )
 
 type IPTablesManager struct {
@@ -57,7 +57,12 @@ func NewIPTablesManager(nodeName string, fwMask uint32, excludeDstCIDRs []net.IP
 
 func (iptm *IPTablesManager) Setup() error {
 	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
-		ipsetProtocol := ipset.Protocol(ipt.Protocol())
+		ipsetProtocol := ipset.IPv4
+		ipsetExcludeDstName := ipsetExcludeDstPrefix + "4"
+		if ipt.IsIPv6() {
+			ipsetProtocol = ipset.IPv6
+			ipsetExcludeDstName = ipsetExcludeDstPrefix + "6"
+		}
 
 		if _, err := iptm.ips.EnsureNetworkSet(ipsetExcludeDstName, ipsetProtocol); err != nil {
 			return fmt.Errorf("failed to ensure %s exclude dst ipset: %w", ipsetProtocol, err)
