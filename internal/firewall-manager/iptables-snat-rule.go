@@ -2,6 +2,7 @@ package firewall_manager
 
 import (
 	"net"
+	"strings"
 
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 )
@@ -44,4 +45,18 @@ func (r *IPTablesSNATRule) Spec() []string {
 		return []string{"<nil>"}
 	}
 	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "SNAT", "--to", r.SNATIP.String()}
+}
+
+func (r *IPTablesSNATRule) String() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return strings.Join(r.Spec(), " ")
+}
+
+func (r *IPTablesSNATRule) RuleID() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return r.SrcIPSetName
 }

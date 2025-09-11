@@ -1,6 +1,8 @@
 package firewall_manager
 
 import (
+	"strings"
+
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 )
 
@@ -35,6 +37,20 @@ func (r *IPTablesRejectRule) Spec() []string {
 		return []string{"<nil>"}
 	}
 	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "REJECT", "--reject-with", r.rejectWith()}
+}
+
+func (r *IPTablesRejectRule) String() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return strings.Join(r.Spec(), " ")
+}
+
+func (r *IPTablesRejectRule) RuleID() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return r.SrcIPSetName
 }
 
 func (r *IPTablesRejectRule) rejectWith() string {

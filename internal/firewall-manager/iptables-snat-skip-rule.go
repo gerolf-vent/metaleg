@@ -45,3 +45,10 @@ func (r *IPTablesSNATSkipRule) Spec() []string {
 	}
 	return []string{"-m", "mark", "!", "--mark", "0x0/0x" + strconv.FormatUint(uint64(r.FWMask), 16), "-j", "RETURN"}
 }
+
+func (r *IPTablesSNATSkipRule) String() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return strings.Join(r.Spec(), " ")
+}

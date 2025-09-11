@@ -1,6 +1,8 @@
 package firewall_manager
 
 import (
+	"strings"
+
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 )
 
@@ -35,4 +37,11 @@ func (r *IPTablesExcludeCIDRsRule) Spec() []string {
 		return []string{"<nil>"}
 	}
 	return []string{"-m", "set", "--match-set", r.IPSetName, "dst", "-j", "RETURN"}
+}
+
+func (r *IPTablesExcludeCIDRsRule) String() string {
+	if r == nil {
+		return "<nil>"
+	}
+	return strings.Join(r.Spec(), " ")
 }
