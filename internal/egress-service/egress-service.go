@@ -98,7 +98,7 @@ func (es *EgressService) Start(ctx context.Context) error {
 			}
 
 			// Garbage collect egress rules that are no longer present
-			if err := es.firewallManager.CleanupEgressRules(es.rules); err != nil {
+			if err := es.firewallManager.CleanupStaleEgressRules(es.rules); err != nil {
 				logger.Error(err, "Failed to cleanup egress rules")
 			}
 
@@ -215,7 +215,7 @@ func (es *EgressService) DeleteEgressRule(id string) error {
 	if !exists {
 		// Maybe the last attempt to delete the rule was not reconciled successfully,
 		// but we can catch a left-over rule by a general cleanup.
-		if err := es.firewallManager.CleanupEgressRules(es.rules); err != nil {
+		if err := es.firewallManager.CleanupStaleEgressRules(es.rules); err != nil {
 			return err
 		}
 		return nil

@@ -4,5 +4,5 @@ type FirewallManager interface {
 	Setup() error
 	Cleanup() error
 	ReconcileEgressRule(rule *EgressRule, present bool) error
-	CleanupEgressRules(rules map[string]*EgressRule) error
+	CleanupStaleEgressRules(rules map[string]*EgressRule) error
 }

@@ -447,7 +447,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 	return errors.Join(errs...)
 }
 
-func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) error {
+func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRule) error {
 	if len(rules) == 0 {
 		return nil
 	}
