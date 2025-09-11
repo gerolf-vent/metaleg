@@ -32,8 +32,6 @@ func TestNew(t *testing.T) {
 	}
 	if ips == nil {
 		t.Error("Expected non-nil IPSet")
-	} else {
-		t.Logf("Found ipset at %s", ips.path)
 	}
 }
 

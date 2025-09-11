@@ -25,7 +25,7 @@ type IPTablesManager struct {
 	excludeDstCIDRs []net.IPNet       // CIDRs to exclude from firewall rules (and therefore traffic redirection)
 	ipt4            iptables.IPTables // IPv4 iptables interface
 	ipt6            iptables.IPTables // IPv6 iptables interface
-	ips             *ipset.IPSet       // IPSet interface
+	ips             ipset.IPSet       // IPSet interface
 }
 
 func NewIPTablesManager(nodeName string, fwMask uint32, excludeDstCIDRs []net.IPNet) (*IPTablesManager, error) {
