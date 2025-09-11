@@ -3,6 +3,7 @@ package iptables
 import (
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,12 @@ func TestChainLifecycle(t *testing.T) {
 		t.Skip("iptables not found, skipping integration test")
 	}
 
+	// Check if we have enough privileges by attempting a harmless ChainExists call.
+	_, err = ipt.ChainExists(TableFilter, ChainInput)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Skipf("Insufficient privileges to manage iptables: %v", err)
+	}
+
 	table := TableFilter
 	chain := Chain("TESTCHAIN1234")
 	_, _ = ipt.DeleteChain(table, chain) // Clean up before
@@ -114,6 +121,12 @@ func TestRuleLifecycle(t *testing.T) {
 		t.Skip("iptables not found, skipping integration test")
 	}
 
+	// Check if we have enough privileges by attempting a harmless ChainExists call.
+	_, err = ipt.ChainExists(TableFilter, ChainInput)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Skipf("Insufficient privileges to manage iptables: %v", err)
+	}
+
 	table := TableFilter
 	chain := Chain("TESTCHAIN1234")
 	_, _ = ipt.DeleteChain(table, chain) // Clean up before
@@ -150,6 +163,12 @@ func TestListRules(t *testing.T) {
 	ipt, err := New(IPv4)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
+	}
+
+	// Check if we have enough privileges by attempting a harmless ChainExists call.
+	_, err = ipt.ChainExists(TableFilter, ChainInput)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Skipf("Insufficient privileges to manage iptables: %v", err)
 	}
 
 	table := TableFilter
