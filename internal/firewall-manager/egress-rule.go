@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	rm "github.com/gerolf-vent/metaleg/internal/route-manager"
-	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 )
 
 type EgressRule struct {
@@ -34,104 +33,4 @@ func (r *EgressRule) CalcIDHash(isIPv6 bool) string {
 	hash := sha256.Sum256([]byte(protoPrefix + r.ID))
 	encoded := base32.StdEncoding.EncodeToString(hash[:])
 	return strings.ToUpper(encoded[:12])
-}
-
-func (r *EgressRule) MatchesIPTablesSNATRule(iptRule *IPTablesSNATRule) bool {
-	if r == nil || iptRule == nil {
-		return false // Invalid rule
-	}
-
-	// Determine the rule's hash ID and SNAT IP based on the protocol
-	var ruleHashID string
-	var snatIP net.IP
-	switch iptRule.Protocol {
-	case iptables.IPv4:
-		ruleHashID = r.CalcIDHash(false)
-		snatIP = r.SNATIPv4
-	case iptables.IPv6:
-		ruleHashID = r.CalcIDHash(true)
-		snatIP = r.SNATIPv6
-	default:
-		return false // Unsupported protocol
-	}
-
-	// Check whether the rule targets the correct IP set
-	if !strings.Contains(iptRule.SrcIPSetName, ruleHashID) {
-		return false
-	}
-
-	// Check if the SNAT IP matches the rule's SNAT IP
-	if !snatIP.Equal(iptRule.SNATIP) {
-		return false
-	}
-
-	return true
-}
-
-func (r *EgressRule) MatchesIPSetName(ipSetName string) bool {
-	if r == nil {
-		return false // Invalid rule
-	}
-
-	ruleHashID := r.CalcIDHash(false)
-	if strings.Contains(ipSetName, ruleHashID) {
-		return true
-	}
-
-	ruleHashID = r.CalcIDHash(true)
-	return strings.Contains(ipSetName, ruleHashID)
-}
-
-func (r *EgressRule) MatchesIPTablesMarkRule(iptRule *IPTablesMarkRule, fwMask uint32) bool {
-	// Ensure the rule is valid and has a gateway set
-	if r.GWRoute == nil {
-		return false
-	}
-
-	// Check if the rule's FWMark and FWMask match the gateway's FWMark and provided mask
-	if iptRule.FWMark != r.GWRoute.FWMark || iptRule.FWMask != fwMask {
-		return false
-	}
-
-	// Determine the rule's hash ID based on the protocol
-	var ruleHashID string
-	switch iptRule.Protocol {
-	case iptables.IPv4:
-		ruleHashID = r.CalcIDHash(false)
-	case iptables.IPv6:
-		ruleHashID = r.CalcIDHash(true)
-	default:
-		return false // Unsupported protocol
-	}
-
-	// Check whether the rule targets the correct IP set
-	if !strings.Contains(iptRule.SrcIPSetName, ruleHashID) {
-		return false
-	}
-
-	return true
-}
-
-func (r *EgressRule) MatchesIPTablesRejectRule(iptRule *IPTablesRejectRule) bool {
-	if r.GWRoute != nil {
-		return false // Reject rules are not applicable when a gateway route is set
-	}
-
-	// Determine the rule's hash ID based on the protocol
-	var ruleHashID string
-	switch iptRule.Protocol {
-	case iptables.IPv4:
-		ruleHashID = r.CalcIDHash(false)
-	case iptables.IPv6:
-		ruleHashID = r.CalcIDHash(true)
-	default:
-		return false // Unsupported protocol
-	}
-
-	// Check whether the rule targets the correct IP set
-	if !strings.Contains(iptRule.SrcIPSetName, ruleHashID) {
-		return false
-	}
-
-	return true
 }
