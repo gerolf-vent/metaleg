@@ -44,6 +44,7 @@ func (e *CmdError) Error() string {
 
 // IPSet defines the interface for ipset operations
 type IPSet interface {
+	ListSets() ([]string, error)
 	SetExists(name string) (bool, error)
 	EnsureSet(name string, proto Protocol) (bool, error)
 	DeleteSet(name string) (bool, error)
@@ -79,6 +80,21 @@ func New() (IPSet, error) {
 	}
 
 	return ipset, nil
+}
+
+func (ips *ipSet) ListSets() ([]string, error) {
+	args := []string{"list", "-n"}
+
+	stdout := &bytes.Buffer{}
+	err := ips.runWithOutput(args, stdout)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := strings.FieldsFunc(stdout.String(), func(r rune) bool {
+		return r == '\n' || r == '\r'
+	})
+	return entries, nil
 }
 
 func (ips *ipSet) SetExists(name string) (bool, error) {

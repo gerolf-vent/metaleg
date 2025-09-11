@@ -152,3 +152,45 @@ func TestNetworkEntryLifecycle(t *testing.T) {
 	}
 	_, _ = ips.DeleteNetworkSet(setName)
 }
+
+func TestListSets(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	setName1 := "testlistset1"
+	setName2 := "testlistset2"
+	_, _ = ips.DeleteSet(setName1)
+	_, _ = ips.DeleteSet(setName2)
+
+	_, err = ips.EnsureSet(setName1, IPv4)
+	if err != nil {
+		t.Fatalf("EnsureSet failed: %v", err)
+	}
+	_, err = ips.EnsureSet(setName2, IPv6)
+	if err != nil {
+		t.Fatalf("EnsureSet failed: %v", err)
+	}
+
+	sets, err := ips.ListSets()
+	if err != nil {
+		t.Fatalf("ListSets failed: %v", err)
+	}
+
+	found1, found2 := false, false
+	for _, s := range sets {
+		if s == setName1 {
+			found1 = true
+		}
+		if s == setName2 {
+			found2 = true
+		}
+	}
+	if !found1 || !found2 {
+		t.Errorf("Expected sets %s and %s to be listed, got %v", setName1, setName2, sets)
+	}
+
+	_, _ = ips.DeleteSet(setName1)
+	_, _ = ips.DeleteSet(setName2)
+}
