@@ -31,6 +31,9 @@ func ParseIPTablesRejectRule(spec []string, protocol iptables.Protocol) (*IPTabl
 }
 
 func (r *IPTablesRejectRule) Spec() []string {
+	if r == nil {
+		return []string{"<nil>"}
+	}
 	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "REJECT", "--reject-with", r.rejectWith()}
 }
 

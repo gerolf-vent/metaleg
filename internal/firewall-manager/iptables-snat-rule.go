@@ -40,5 +40,8 @@ func ParseIPTablesSNATRule(spec []string, protocol iptables.Protocol) (*IPTables
 }
 
 func (r *IPTablesSNATRule) Spec() []string {
+	if r == nil {
+		return []string{"<nil>"}
+	}
 	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "SNAT", "--to", r.SNATIP.String()}
 }

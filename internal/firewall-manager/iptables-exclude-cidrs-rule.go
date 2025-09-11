@@ -31,5 +31,8 @@ func ParseIPTablesExcludeCIDRsRule(spec []string, protocol iptables.Protocol) (*
 }
 
 func (r *IPTablesExcludeCIDRsRule) Spec() []string {
+	if r == nil {
+		return []string{"<nil>"}
+	}
 	return []string{"-m", "set", "--match-set", r.IPSetName, "dst", "-j", "RETURN"}
 }

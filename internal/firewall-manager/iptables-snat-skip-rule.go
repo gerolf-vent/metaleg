@@ -40,5 +40,8 @@ func ParseIPTablesSNATSkipRule(spec []string) (*IPTablesSNATSkipRule, bool) {
 }
 
 func (r *IPTablesSNATSkipRule) Spec() []string {
+	if r == nil {
+		return []string{"<nil>"}
+	}
 	return []string{"-m", "mark", "!", "--mark", "0x0/0x" + strconv.FormatUint(uint64(r.FWMask), 16), "-j", "RETURN"}
 }
