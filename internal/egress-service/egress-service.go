@@ -130,20 +130,23 @@ func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcI
 	}
 
 	rule, exists := es.rules[id]
-	oldRule := rule // Keep a reference to the old rule for comparison
+	var oldGWNodeName string
+	if exists {
+		oldGWNodeName = rule.GWNodeName // Keep a copy of the old gateway node name for comparison
+	}
 
 	nodesUpdated := make(map[string]*rm.NodeRoute)
 
 	if exists {
 		// If the rule already existed, we need to decrement the link count for the old
 		// gateway node route, if it is different from the new one.
-		if oldRule.GWNodeName != "" && oldRule.GWNodeName != gwNodeName {
-			if gwRoute, ok := es.nodes[oldRule.GWNodeName]; ok && gwRoute.RuleCount > 0 {
+		if oldGWNodeName != "" && oldGWNodeName != gwNodeName {
+			if gwRoute, ok := es.nodes[oldGWNodeName]; ok && gwRoute.RuleCount > 0 {
 				gwRoute.RuleCount-- // Decrement the link count for the old node route
 				if gwRoute.RuleCount == 0 {
 					// If the link count reaches zero, we need to reconcile the node route,
 					// because it will be removed from the routing table
-					nodesUpdated[oldRule.GWNodeName] = gwRoute
+					nodesUpdated[oldGWNodeName] = gwRoute
 				}
 			}
 		}
@@ -169,7 +172,7 @@ func (es *EgressService) UpdateEgressRule(id string, lbIPv4, lbIPv6 net.IP, srcI
 
 	// If the updated rule is new or the gateway node name has changed, the gateway
 	// route and it's link counter needs to be updated.
-	if gwNodeName != "" && (!exists || gwNodeName != oldRule.GWNodeName) {
+	if gwNodeName != "" && (!exists || gwNodeName != oldGWNodeName) {
 		if gwRoute, ok := es.nodes[gwNodeName]; ok {
 			rule.GWRoute = gwRoute // Set the gateway route to the node route
 			gwRoute.RuleCount++
