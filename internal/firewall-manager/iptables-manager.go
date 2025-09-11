@@ -20,11 +20,11 @@ const (
 )
 
 type IPTablesManager struct {
-	nodeName        string             // Name of the node this manager is running on
-	fwMask          uint32             // Firewall mask for egress rules
-	excludeDstCIDRs []net.IPNet        // CIDRs to exclude from firewall rules (and therefore traffic redirection)
-	ipt4            *iptables.IPTables // IPv4 iptables interface
-	ipt6            *iptables.IPTables // IPv6 iptables interface
+	nodeName        string            // Name of the node this manager is running on
+	fwMask          uint32            // Firewall mask for egress rules
+	excludeDstCIDRs []net.IPNet       // CIDRs to exclude from firewall rules (and therefore traffic redirection)
+	ipt4            iptables.IPTables // IPv4 iptables interface
+	ipt6            iptables.IPTables // IPv6 iptables interface
 	ips             *ipset.IPSet       // IPSet interface
 }
 
@@ -56,7 +56,7 @@ func NewIPTablesManager(nodeName string, fwMask uint32, excludeDstCIDRs []net.IP
 }
 
 func (iptm *IPTablesManager) Setup() error {
-	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
 		ipsetProtocol := ipset.IPv4
 		ipsetExcludeDstName := ipsetExcludeDstPrefix + "4"
 		if ipt.IsIPv6() {
@@ -175,7 +175,7 @@ func (iptm *IPTablesManager) Setup() error {
 func (iptm *IPTablesManager) Cleanup() error {
 	var errs []error
 
-	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
 		if _, err := ipt.DeleteRule(iptables.TableMangle, iptables.ChainPrerouting, "-j", iptablesRTMarkChainName); err != nil {
 			errs = append(errs, fmt.Errorf("failed to delete %s mangle PREROUTING rule: %w", ipt.Protocol(), err))
 		}
@@ -230,7 +230,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 	isGWRouteKnown := rule.GWRoute != nil
 	isGWRouteAllocated := isGWRouteKnown && rule.GWRoute.IDAllocated
 
-	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
 		ruleHash := rule.CalcIDHash(ipt.IsIPv6())
 		ipsetSrcName := ipsetSrcPrefix + ruleHash
 		var ipsetProto ipset.Protocol
@@ -454,7 +454,7 @@ func (iptm *IPTablesManager) CleanupEgressRules(rules map[string]*EgressRule) er
 
 	var errs []error
 
-	for _, ipt := range []*iptables.IPTables{iptm.ipt4, iptm.ipt6} {
+	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
 		expectedIDHashes := make(set.Set[string], len(rules))
 		for _, rule := range rules {
 			expectedIDHashes.Add(rule.CalcIDHash(ipt.IsIPv6()))

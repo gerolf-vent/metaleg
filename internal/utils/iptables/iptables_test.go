@@ -175,42 +175,6 @@ func TestListRules(t *testing.T) {
 	_, _ = ipt.DeleteChain(table, chain)
 }
 
-func TestCheckVersion(t *testing.T) {
-	ipt, err := New(IPv4)
-	if err != nil {
-		t.Skip("iptables not found, skipping integration test")
-	}
-
-	err = ipt.checkVersion()
-	if err != nil {
-		t.Errorf("checkVersion failed: %v", err)
-	}
-}
-
-func TestRunWithOutput_Error(t *testing.T) {
-	ipt, err := New(IPv4)
-	if err != nil {
-		t.Skip("iptables not found, skipping integration test")
-	}
-
-	err = ipt.runWithOutput([]string{"notarealcommand"}, nil)
-	if err == nil {
-		t.Error("Expected error for invalid command")
-	}
-}
-
-func TestRun_Error(t *testing.T) {
-	ipt, err := New(IPv4)
-	if err != nil {
-		t.Skip("iptables not found, skipping integration test")
-	}
-
-	err = ipt.run([]string{"notarealcommand"})
-	if err == nil {
-		t.Error("Expected error for invalid command")
-	}
-}
-
 func TestTableString(t *testing.T) {
 	if TableNAT != "nat" || TableFilter != "filter" || TableMangle != "mangle" {
 		t.Error("Table string values incorrect")

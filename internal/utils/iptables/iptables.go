@@ -82,13 +82,28 @@ func (e *CmdError) Error() string {
 	return fmt.Sprintf("Command %q failed with exit code %d: %s", e.cmd, e.ExitCode(), e.msg)
 }
 
-type IPTables struct {
+// IPTables defines the interface for iptables operations
+type IPTables interface {
+	IsIPv6() bool
+	Protocol() Protocol
+	ChainExists(table Table, chain Chain) (bool, error)
+	EnsureChain(table Table, chain Chain) (bool, error)
+	FlushChain(table Table, chain Chain) error
+	DeleteChain(table Table, chain Chain) (bool, error)
+	RuleExists(table Table, chain Chain, rulespec ...string) (bool, error)
+	ListRules(table Table, chain Chain) ([][]string, error)
+	EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error)
+	DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error)
+}
+
+// ipTables represents the concrete implementation of iptables operations
+type ipTables struct {
 	sync.Mutex
 	path  string
 	proto Protocol
 }
 
-func New(proto Protocol) (*IPTables, error) {
+func New(proto Protocol) (IPTables, error) {
 	var path string
 	var err error
 
@@ -107,7 +122,7 @@ func New(proto Protocol) (*IPTables, error) {
 		return nil, os.ErrInvalid
 	}
 
-	ipt := &IPTables{
+	ipt := &ipTables{
 		path:  path,
 		proto: proto,
 	}
@@ -115,15 +130,15 @@ func New(proto Protocol) (*IPTables, error) {
 	return ipt, ipt.checkVersion()
 }
 
-func (ipt *IPTables) IsIPv6() bool {
+func (ipt *ipTables) IsIPv6() bool {
 	return ipt.proto == IPv6
 }
 
-func (ipt *IPTables) Protocol() Protocol {
+func (ipt *ipTables) Protocol() Protocol {
 	return ipt.proto
 }
 
-func (ipt *IPTables) ChainExists(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) ChainExists(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -139,7 +154,7 @@ func (ipt *IPTables) ChainExists(table Table, chain Chain) (bool, error) {
 	return true, nil
 }
 
-func (ipt *IPTables) EnsureChain(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) EnsureChain(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -155,7 +170,7 @@ func (ipt *IPTables) EnsureChain(table Table, chain Chain) (bool, error) {
 	return false, nil
 }
 
-func (ipt *IPTables) FlushChain(table Table, chain Chain) error {
+func (ipt *ipTables) FlushChain(table Table, chain Chain) error {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -168,7 +183,7 @@ func (ipt *IPTables) FlushChain(table Table, chain Chain) error {
 	return nil
 }
 
-func (ipt *IPTables) DeleteChain(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) DeleteChain(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -193,14 +208,14 @@ func (ipt *IPTables) DeleteChain(table Table, chain Chain) (bool, error) {
 	return false, nil
 }
 
-func (ipt *IPTables) RuleExists(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) RuleExists(table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
 	return ipt.check(table, chain, rulespec...)
 }
 
-func (ipt *IPTables) ListRules(table Table, chain Chain) ([][]string, error) {
+func (ipt *ipTables) ListRules(table Table, chain Chain) ([][]string, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -235,7 +250,7 @@ func (ipt *IPTables) ListRules(table Table, chain Chain) ([][]string, error) {
 	return rules, nil
 }
 
-func (ipt *IPTables) EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -256,7 +271,7 @@ func (ipt *IPTables) EnsureRule(position RulePosition, table Table, chain Chain,
 	return true, nil
 }
 
-func (ipt *IPTables) DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -276,7 +291,7 @@ func (ipt *IPTables) DeleteRule(table Table, chain Chain, rulespec ...string) (b
 	return false, nil
 }
 
-func (ipt *IPTables) check(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) check(table Table, chain Chain, rulespec ...string) (bool, error) {
 	args := append([]string{"-t", string(table), "-C", string(chain)}, rulespec...)
 
 	err := ipt.run(args)
@@ -294,7 +309,7 @@ func (ipt *IPTables) check(table Table, chain Chain, rulespec ...string) (bool, 
 	return true, err
 }
 
-func (ipt *IPTables) checkVersion() error {
+func (ipt *ipTables) checkVersion() error {
 	args := []string{"--version"}
 
 	stdout := &bytes.Buffer{}
@@ -321,11 +336,11 @@ func (ipt *IPTables) checkVersion() error {
 	return nil
 }
 
-func (ipt *IPTables) run(args []string) error {
+func (ipt *ipTables) run(args []string) error {
 	return ipt.runWithOutput(args, nil)
 }
 
-func (ipt *IPTables) runWithOutput(args []string, stdout io.Writer) error {
+func (ipt *ipTables) runWithOutput(args []string, stdout io.Writer) error {
 	// Prepend the command path to arguments (as exec.Cmd expects the first argument to be the command itself)
 	args = append([]string{ipt.path}, args...)
 
