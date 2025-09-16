@@ -199,10 +199,6 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 }
 
 func (nlm *NetlinkManager) CleanupStaleNodeRoutes(routes map[string]*NodeRoute) error {
-	if len(routes) == 0 {
-		return nil
-	}
-
 	routeTableIDMin := int(nlm.routeTableIDOffset)
 	routeTableIDMax := int(uint(nlm.routeTableIDOffset) + nlm.fwMask.Size() - 1)
 
