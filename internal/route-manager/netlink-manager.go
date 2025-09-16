@@ -30,13 +30,14 @@ func NewNetlinkManager(fwMask utils.FWMask, routeTableIDOffset uint32) (*Netlink
 		fwMask:             fwMask,
 		routeTableIDOffset: routeTableIDOffset,
 		// We can't use the first element (0) in the range, because a fw mask with that
-		// value would cause all traffic to be matched
+		// value would cause all traffic to be matched, so we start allocating from 1
+		// and the id allocator must be created with a size reduced by 1
 		idAllocator: utils.NewIDRangeAllocator(fwMask.Size() - 1),
 	}, nil
 }
 
 func (nlm *NetlinkManager) Setup() error {
-	// NetlinkManager does not require any setup
+	// Nothing needed
 	return nil
 }
 
@@ -47,35 +48,19 @@ func (nlm *NetlinkManager) Cleanup() error {
 	routeTableIDMax := int(uint(nlm.routeTableIDOffset) + nlm.fwMask.Size() - 1)
 
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		// Query all existing netlink rules for the family
-		nlRules, err := netlink.RuleList(family)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink rules: %w", err))
-		} else {
-			// Cleanup any left-over rules
-			for _, r := range nlRules {
-				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax {
-					if err := netlink.RuleDel(&r); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete netlink rule: %w", err))
-					}
-				}
-			}
+		// Cleanup netlink rules
+		ruleCleaner := &NetlinkRuleCleaner{
+			TableIDMin:       routeTableIDMin,
+			TableIDMax:       routeTableIDMax,
+			ExpectedTableIDs: set.New[int](), // No expected table IDs, we want to clean up everything in range
+			Family:           family,
+		}
+		if err := ruleCleaner.Clean(); err != nil {
+			errs = append(errs, err)
 		}
 
-		// Query all existing netlink routes for the family
-		nlRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{}, 0)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink routes: %w", err))
-		} else {
-			// Cleanup any left-over routes
-			for _, r := range nlRoutes {
-				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax {
-					if err := netlink.RouteDel(&r); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete netlink route: %w", err))
-					}
-				}
-			}
-		}
+		// Cleanup netlink routes is to expensive, because we would need to iterate through all the tables.
+		// But they don't affect anything, because the rules are gone.
 	}
 
 	return errors.Join(errs...)
@@ -99,7 +84,7 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 		}
 		route.IDAllocated = true
 		// We can't use the first fw mark in range, because it's 0 and would cause all
-		// traffic to be matched, so we shift the ID by 1
+		// traffic to be matched, so we add 1 to the ID here
 		route.FWMark = (uint32(route.ID) + 1) << uint32(nlm.fwMask.Shift())
 		route.RouteTableID = nlm.routeTableIDOffset + uint32(route.ID)
 	}
@@ -132,75 +117,65 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 		} else {
 			gwIP = route.IPv6
 			zeroIP = net.IPv6zero
+			maskSize = 128
 		}
 
-		// Query all existing netlink rules for the family
-		nrRules, err := netlink.RuleList(family)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink rules: %w", err))
-		} else {
-			// Cleanup any conflicting or left-over rules for the current node and try to
-			// find the existing rule for the node
-			var foundRule bool
-			for _, r := range nrRules {
-				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax && r.Table == int(route.RouteTableID) {
-					if present && r.Mark == route.FWMark && r.Mask == (*uint32)(&nlm.fwMask) {
-						foundRule = true
-					} else {
-						// If the rule does not match the current node's FW mark or mask, delete it
-						if err := netlink.RuleDel(&r); err != nil {
-							errs = append(errs, fmt.Errorf("failed to delete conflicting netlink rule: %w", err))
-						}
-					}
-				}
-			}
+		//
+		// Synchronize the netlink rule
+		//
 
-			// Create the rule for the node if it does not exist
-			if present && !foundRule {
-				// Create a new rule for the node if it does not exist
-				newRule := netlink.NewRule()
-				newRule.Mark = route.FWMark
-				newRule.Mask = (*uint32)(&nlm.fwMask)
-				newRule.Table = int(route.RouteTableID)
-				newRule.Family = family
-				if err := netlink.RuleAdd(newRule); err != nil {
-					errs = append(errs, fmt.Errorf("failed to add netlink rule for node %s: %w", route.Name, err))
-				}
-			}
+		fwMarkRule := netlink.NewRule()
+		fwMarkRule.Mark = route.FWMark
+		fwMarkRule.Mask = (*uint32)(&nlm.fwMask)
+		fwMarkRule.Table = int(route.RouteTableID)
+		fwMarkRule.Family = family
+
+		ruleSynchronizer := &NetlinkRuleSynchronizer{
+			Rule: fwMarkRule,
+			Filter: func(existingRule *netlink.Rule) bool {
+				return existingRule != nil && existingRule.Table == fwMarkRule.Table
+			},
+			Equal: func(a, b *netlink.Rule) bool {
+				return a.Mark == b.Mark &&
+					((a.Mask == nil && b.Mask == nil) || (a.Mask != nil && b.Mask != nil && *a.Mask == *b.Mask)) &&
+					a.Table == b.Table &&
+					a.Family == b.Family
+			},
+			Present: present,
+		}
+		if err := ruleSynchronizer.Sync(); err != nil {
+			errs = append(errs, err)
 		}
 
-		// Query all existing netlink routes for the family and the route table ID
-		nlRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: int(route.RouteTableID)}, netlink.RT_FILTER_TABLE)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink routes: %w", err))
-		} else {
-			foundRoute := false
-			for _, r := range nlRoutes {
-				_, bits := r.Dst.Mask.Size()
-				if present && !foundRoute && bits == 0 && r.Gw.Equal(gwIP) {
-					foundRoute = true
-				} else {
-					// If the route does not match the current node's gateway IP, delete it
-					if err := netlink.RouteDel(&r); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete conflicting netlink route: %w", err))
-					}
-				}
-			}
+		//
+		// Synchronize the netlink route
+		//
 
-			// Create the route for the node if it does not exist
-			if present && !foundRoute {
-				nlRoute := &netlink.Route{
+		gwRoute := &netlink.Route{
 					Dst: &net.IPNet{
 						IP:   zeroIP,
-						Mask: net.CIDRMask(0, family),
+				Mask: net.CIDRMask(0, maskSize),
 					},
-					Gw:    gwIP,
-					Table: int(route.RouteTableID),
-				}
-				if err := netlink.RouteAdd(nlRoute); err != nil {
-					errs = append(errs, fmt.Errorf("failed to add netlink route for node %s: %w", route.Name, err))
-				}
-			}
+			Gw:     gwIP,
+			Table:  int(route.RouteTableID),
+			Family: family,
+		}
+
+		routeSynchronizer := &NetlinkRouteSynchronizer{
+			Route: gwRoute,
+			Filter: func(existingRoute *netlink.Route) bool {
+				return existingRoute != nil && existingRoute.Table == gwRoute.Table
+			},
+			Equal: func(a, b *netlink.Route) bool {
+				return a.Dst != nil && b.Dst != nil &&
+					a.Dst.String() == b.Dst.String() &&
+					a.Gw.Equal(b.Gw) &&
+					a.Table == b.Table
+			},
+			Present: present,
+		}
+		if err := routeSynchronizer.Sync(); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
@@ -235,37 +210,19 @@ func (nlm *NetlinkManager) CleanupStaleNodeRoutes(routes map[string]*NodeRoute) 
 	var errs []error
 
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		// Query all existing netlink rules for the family
-		nlRules, err := netlink.RuleList(family)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink rules: %w", err))
-		} else {
-			// Cleanup any left-over rules
-			for _, r := range nlRules {
-				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax && !expectedRouteTableIDs.Contains(r.Table) {
-					// The rule is in our table id range but not in the expected set, so delete it
-					if err := netlink.RuleDel(&r); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete netlink rule: %w", err))
-					}
-				}
-			}
+		// Cleanup netlink rules
+		ruleCleaner := &NetlinkRuleCleaner{
+			TableIDMin:       routeTableIDMin,
+			TableIDMax:       routeTableIDMax,
+			ExpectedTableIDs: expectedRouteTableIDs,
+			Family:           family,
+		}
+		if err := ruleCleaner.Clean(); err != nil {
+			errs = append(errs, err)
 		}
 
-		// Query all existing netlink routes for the family
-		nlRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{}, 0)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list netlink routes: %w", err))
-		} else {
-			// Cleanup any left-over routes
-			for _, r := range nlRoutes {
-				if r.Table >= routeTableIDMin && r.Table <= routeTableIDMax && !expectedRouteTableIDs.Contains(r.Table) {
-					// If the route is in our table id range but not in the expected set, delete it
-					if err := netlink.RouteDel(&r); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete netlink route: %w", err))
-					}
-				}
-			}
-		}
+		// Cleanup netlink routes is to expensive, because we would need to iterate through all the tables.
+		// But they don't affect anything, because the rules are gone.
 	}
 
 	return errors.Join(errs...)
