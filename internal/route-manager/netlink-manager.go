@@ -22,6 +22,10 @@ func NewNetlinkManager(fwMask utils.FWMask, routeTableIDOffset uint32) (*Netlink
 		return nil, fmt.Errorf("firewall mask too small")
 	}
 
+	if !fwMask.IsContinous() {
+		return nil, fmt.Errorf("firewall mask not continous")
+	}
+
 	if routeTableIDOffset > math.MaxUint32-uint32(fwMask.Size()) {
 		return nil, fmt.Errorf("route table ID offset is too large")
 	}
