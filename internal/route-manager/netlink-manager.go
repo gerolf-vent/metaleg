@@ -158,10 +158,10 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 		//
 
 		gwRoute := &netlink.Route{
-					Dst: &net.IPNet{
-						IP:   zeroIP,
+			Dst: &net.IPNet{
+				IP:   zeroIP,
 				Mask: net.CIDRMask(0, maskSize),
-					},
+			},
 			Gw:     gwIP,
 			Table:  int(route.RouteTableID),
 			Family: family,
