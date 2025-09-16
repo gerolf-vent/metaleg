@@ -36,3 +36,22 @@ func (a *IDRangeAllocator) Release(id uint) {
 	}
 	a.bitset.Clear(id)
 }
+
+func (a *IDRangeAllocator) IsAllocated(id uint) bool {
+	if id >= a.bitset.Len() {
+		return false // Out-of-range IDs are considered not allocated
+	}
+	return a.bitset.Test(id)
+}
+
+func (a *IDRangeAllocator) Size() uint {
+	return a.bitset.Len()
+}
+
+func (a *IDRangeAllocator) AllocatedCount() uint {
+	return uint(a.bitset.Count())
+}
+
+func (a *IDRangeAllocator) FreeCount() uint {
+	return a.Size() - a.AllocatedCount()
+}
