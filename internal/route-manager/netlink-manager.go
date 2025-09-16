@@ -115,9 +115,11 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 		var gwIP net.IP
 		var zeroIP net.IP
+		var maskSize int
 		if family == netlink.FAMILY_V4 {
 			gwIP = route.IPv4
 			zeroIP = net.IPv4zero
+			maskSize = 32
 		} else {
 			gwIP = route.IPv6
 			zeroIP = net.IPv6zero
