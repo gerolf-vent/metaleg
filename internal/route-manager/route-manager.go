@@ -4,5 +4,5 @@ type RouteManager interface {
 	Setup() error
 	Cleanup() error
 	ReconcileNodeRoute(route *NodeRoute, present bool) error
-	CleanupNodeRoutes(routes map[string]*NodeRoute) error
+	CleanupStaleNodeRoutes(routes map[string]*NodeRoute) error
 }

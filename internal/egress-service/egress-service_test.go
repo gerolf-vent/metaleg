@@ -89,7 +89,7 @@ func (m *mockRouteManager) ReconcileNodeRoute(route *rm.NodeRoute, present bool)
 	return m.reconcileErr
 }
 
-func (m *mockRouteManager) CleanupNodeRoutes(routes map[string]*rm.NodeRoute) error {
+func (m *mockRouteManager) CleanupStaleNodeRoutes(routes map[string]*rm.NodeRoute) error {
 	if m.cleanupNodeRoutesCalls == nil {
 		m.cleanupNodeRoutesCalls = []map[string]*rm.NodeRoute{}
 	}

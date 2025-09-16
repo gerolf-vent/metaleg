@@ -81,7 +81,7 @@ func (es *EgressService) Start(ctx context.Context) error {
 			}
 
 			// Garbage collect node routes that are no longer present
-			if err := es.routeManager.CleanupNodeRoutes(es.nodes); err != nil {
+			if err := es.routeManager.CleanupStaleNodeRoutes(es.nodes); err != nil {
 				logger.Error(err, "Failed to cleanup node routes")
 			}
 
@@ -327,7 +327,7 @@ func (es *EgressService) DeleteNodeRoute(nodeName string) error {
 
 		// Maybe the last attempt to delete the node route was not reconciled successfully,
 		// but we can catch a left-over node route by a general cleanup.
-		if err := es.routeManager.CleanupNodeRoutes(es.nodes); err != nil {
+		if err := es.routeManager.CleanupStaleNodeRoutes(es.nodes); err != nil {
 			errs = append(errs, err)
 		}
 

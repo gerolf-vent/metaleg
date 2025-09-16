@@ -217,7 +217,7 @@ func (nlm *NetlinkManager) ReconcileNodeRoute(route *NodeRoute, present bool) er
 	return errors.Join(errs...)
 }
 
-func (nlm *NetlinkManager) CleanupNodeRoutes(routes map[string]*NodeRoute) error {
+func (nlm *NetlinkManager) CleanupStaleNodeRoutes(routes map[string]*NodeRoute) error {
 	if len(routes) == 0 {
 		return nil
 	}
