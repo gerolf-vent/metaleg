@@ -393,6 +393,11 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			expectedRuleIDs.Add(ipsetSrcPrefix + rule.CalcIDHash(ipt.IsIPv6()))
 		}
 
+		excludeCIDRsRuleID := ipsetExcludeDstPrefix + "4"
+		if ipt.IsIPv6() {
+			excludeCIDRsRuleID = ipsetExcludeDstPrefix + "6"
+		}
+
 		//
 		// Cleanup Reject rules
 		//
@@ -404,8 +409,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesRejectChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				_, ok := ParseIPTablesExcludeCIDRsRule(ruleSpec, ipt.Protocol())
-				return ok // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
 			},
 		}
 		err := rejectRuleCleaner.Clean()
@@ -424,8 +428,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesRTMarkChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				_, ok := ParseIPTablesExcludeCIDRsRule(ruleSpec, ipt.Protocol())
-				return ok // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
 			},
 		}
 		err = rtMarkRuleCleaner.Clean()
@@ -444,8 +447,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesSNATChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				_, ok := ParseIPTablesExcludeCIDRsRule(ruleSpec, ipt.Protocol())
-				return ok // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
 			},
 		}
 		err = snatRuleCleaner.Clean()
