@@ -271,7 +271,7 @@ func (ips *ipSet) deleteEntry(setName string, entry string) (bool, error) {
 	args := []string{"del", setName, entry}
 	err := ips.run(args)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if strings.Contains(err.Error(), "it's not added") {
 			return true, nil
 		}
 		return false, err
