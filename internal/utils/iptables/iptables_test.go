@@ -1,11 +1,22 @@
 package iptables
 
 import (
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func requireIPTablePrivileges(t *testing.T, ipt IPTables) {
+	t.Helper()
+
+	// Check if we have enough privileges by attempting a harmless ChainExists call.
+	_, err := ipt.ChainExists(TableFilter, ChainInput)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Skipf("Insufficient privileges to manage iptables: %v", err)
+	}
+}
 
 func TestProtocolString(t *testing.T) {
 	if IPv4.String() != "IPv4" {
@@ -38,14 +49,20 @@ func TestNew_InvalidProto(t *testing.T) {
 	}
 }
 
-func TestNew_Integration(t *testing.T) {
-	ipt, err := New(IPv4)
-	if err != nil {
-		t.Skip("iptables not found, skipping integration test")
-	}
-
-	if ipt == nil {
-		t.Error("Expected non-nil IPTables")
+func TestNew(t *testing.T) {
+	for _, proto := range []Protocol{IPv4, IPv6} {
+		t.Run(proto.String(), func(t *testing.T) {
+			ipt, err := New(proto)
+			if err != nil {
+				t.Skipf("%s not found, skipping integration test", proto)
+			}
+			if ipt == nil {
+				t.Errorf("Expected non-nil IPTables for %s", proto)
+			}
+			if ipt.Protocol() != proto {
+				t.Errorf("Expected Protocol() to be %s, got %v", proto, ipt.Protocol())
+			}
+		})
 	}
 }
 
@@ -60,28 +77,13 @@ func TestIsIPv6(t *testing.T) {
 	}
 }
 
-func TestProtocolMethod(t *testing.T) {
-	ipt, err := New(IPv4)
-	if err != nil {
-		t.Skip("iptables not found, skipping integration test")
-	}
-
-	if ipt.Protocol() != IPv4 {
-		t.Errorf("Expected Protocol() to be IPv4, got %v", ipt.Protocol())
-	}
-}
-
 func TestChainLifecycle(t *testing.T) {
 	ipt, err := New(IPv4)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
 
-	// Check if we have enough privileges by attempting a harmless ChainExists call.
-	_, err = ipt.ChainExists(TableFilter, ChainInput)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
-		t.Skipf("Insufficient privileges to manage iptables: %v", err)
-	}
+	requireIPTablePrivileges(t, ipt)
 
 	table := TableFilter
 	chain := Chain("TESTCHAIN1234")
@@ -121,11 +123,7 @@ func TestRuleLifecycle(t *testing.T) {
 		t.Skip("iptables not found, skipping integration test")
 	}
 
-	// Check if we have enough privileges by attempting a harmless ChainExists call.
-	_, err = ipt.ChainExists(TableFilter, ChainInput)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
-		t.Skipf("Insufficient privileges to manage iptables: %v", err)
-	}
+	requireIPTablePrivileges(t, ipt)
 
 	table := TableFilter
 	chain := Chain("TESTCHAIN1234")
@@ -165,11 +163,7 @@ func TestListRules(t *testing.T) {
 		t.Skip("iptables not found, skipping integration test")
 	}
 
-	// Check if we have enough privileges by attempting a harmless ChainExists call.
-	_, err = ipt.ChainExists(TableFilter, ChainInput)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied") {
-		t.Skipf("Insufficient privileges to manage iptables: %v", err)
-	}
+	requireIPTablePrivileges(t, ipt)
 
 	table := TableFilter
 	chain := Chain("TESTCHAIN1234")
@@ -209,5 +203,374 @@ func TestChainString(t *testing.T) {
 func TestRulePositionString(t *testing.T) {
 	if Prepend != "-I" || Append != "-A" {
 		t.Error("RulePosition string values incorrect")
+	}
+}
+
+func TestNew_ExecutableNotFound(t *testing.T) {
+	// Save original PATH and restore it after test
+	originalPath := os.Getenv("PATH")
+	defer func() {
+		os.Setenv("PATH", originalPath)
+	}()
+
+	// Set PATH to empty to simulate executable not found
+	os.Setenv("PATH", "")
+
+	_, err := New(IPv4)
+	if err == nil {
+		t.Error("Expected error when iptables executable not found")
+	}
+	if !strings.Contains(err.Error(), "iptables executable not found") {
+		t.Errorf("Expected error message about iptables executable not found, got: %v", err)
+	}
+
+	_, err = New(IPv6)
+	if err == nil {
+		t.Error("Expected error when ip6tables executable not found")
+	}
+	if !strings.Contains(err.Error(), "ip6tables executable not found") {
+		t.Errorf("Expected error message about ip6tables executable not found, got: %v", err)
+	}
+}
+
+func TestEnsureChain_ChainAlreadyExists(t *testing.T) {
+	ipt, err := New(IPv4)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_EXISTS")
+
+	// Clean up before test
+	_, _ = ipt.DeleteChain(table, chain)
+
+	// Create the chain first
+	created, err := ipt.EnsureChain(table, chain)
+	if err != nil {
+		t.Errorf("First EnsureChain failed: %v", err)
+	}
+	if created {
+		t.Error("Expected first EnsureChain to return false (chain was created)")
+	}
+
+	// Try to ensure the same chain again - should return true (already exists)
+	exists, err := ipt.EnsureChain(table, chain)
+	if err != nil {
+		t.Errorf("Second EnsureChain failed: %v", err)
+	}
+	if !exists {
+		t.Error("Expected second EnsureChain to return true (chain already exists)")
+	}
+
+	// Clean up
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
+func TestDeleteChain_ChainDoesNotExist(t *testing.T) {
+	ipt, err := New(IPv4)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_NONEXISTENT")
+
+	// Make sure the chain doesn't exist
+	_, _ = ipt.DeleteChain(table, chain)
+
+	// Verify chain doesn't exist
+	exists, err := ipt.ChainExists(table, chain)
+	if err != nil {
+		t.Errorf("ChainExists failed: %v", err)
+	}
+	if exists {
+		t.Error("Expected chain to not exist before test")
+	}
+
+	// Try to delete non-existent chain - should return true (nothing to delete)
+	deleted, err := ipt.DeleteChain(table, chain)
+	if err != nil {
+		t.Errorf("DeleteChain failed: %v", err)
+	}
+	if !deleted {
+		t.Error("Expected DeleteChain to return true when chain doesn't exist")
+	}
+}
+
+// Test IPTablesSpecParser
+func TestIPTablesSpecParser_NewIPTablesSpecParser(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "{port}"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+	if parser == nil {
+		t.Fatal("Expected non-nil parser")
+	}
+	if len(parser.args) != 3 {
+		t.Errorf("Expected 3 args, got %d", len(parser.args))
+	}
+}
+
+func TestIPTablesSpecParser_Parse_Success(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "{port}"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	spec := []string{"-p", "tcp", "--dport", "8080", "-j", "ACCEPT"}
+	values, ok := parser.Parse(spec)
+	if !ok {
+		t.Error("Expected Parse to succeed")
+	}
+	if values["port"] != "8080" {
+		t.Errorf("Expected port to be '8080', got '%s'", values["port"])
+	}
+}
+
+func TestIPTablesSpecParser_Parse_Mismatch(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "{port}"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	// Test with wrong protocol
+	spec := []string{"-p", "udp", "--dport", "8080", "-j", "ACCEPT"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail with wrong protocol")
+	}
+}
+
+func TestIPTablesSpecParser_Parse_InsufficientValues(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "{port}"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	// Test with insufficient values
+	spec := []string{"-p", "tcp", "--dport"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail with insufficient values")
+	}
+}
+
+func TestIPTablesSpecParser_Parse_ValueMismatch(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "8080"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	// Test with wrong port value
+	spec := []string{"-p", "tcp", "--dport", "9090", "-j", "ACCEPT"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail with wrong port value")
+	}
+}
+
+func TestIPTablesSpecParser_Parse_EmptyArg(t *testing.T) {
+	args := [][]string{
+		{}, // empty arg
+		{"-p", "tcp"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	spec := []string{"-p", "tcp", "-j", "ACCEPT"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail when not all args are matched")
+	}
+}
+
+func TestIPTablesSpecParser_Parse_UnmatchedArg(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"--dport", "{port}"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	// Test with spec that doesn't match all args (missing -j ACCEPT)
+	spec := []string{"-p", "tcp", "--dport", "8080"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail when spec doesn't match all args")
+	}
+}
+
+func TestIPTablesSpecParser_Parse_NoMatchingArg(t *testing.T) {
+	args := [][]string{
+		{"-p", "tcp"},
+		{"-j", "ACCEPT"},
+	}
+	parser := NewIPTablesSpecParser(args)
+
+	// Test with spec that has unrecognized option
+	spec := []string{"-p", "tcp", "--unknown-option", "value", "-j", "ACCEPT"}
+	_, ok := parser.Parse(spec)
+	if ok {
+		t.Error("Expected Parse to fail with unrecognized option")
+	}
+}
+
+// Test additional error scenarios for main iptables functionality
+func TestEnsureRule_DeleteRule_NonExistent(t *testing.T) {
+	ipt, err := New(IPv4)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_RULES")
+	_, _ = ipt.DeleteChain(table, chain)
+	_, _ = ipt.EnsureChain(table, chain)
+
+	// Test deleting a non-existent rule
+	rule := []string{"-p", "tcp", "--dport", "99999", "-j", "DROP"}
+	deleted, err := ipt.DeleteRule(table, chain, rule...)
+	if err != nil {
+		t.Errorf("DeleteRule failed: %v", err)
+	}
+	if deleted {
+		t.Error("Expected DeleteRule to return false when rule doesn't exist")
+	}
+
+	// Clean up
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
+func TestEnsureRule_RuleAlreadyExists(t *testing.T) {
+	ipt, err := New(IPv4)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_EXISTING_RULE")
+	_, _ = ipt.DeleteChain(table, chain)
+	_, _ = ipt.EnsureChain(table, chain)
+
+	rule := []string{"-p", "tcp", "--dport", "54321", "-j", "ACCEPT"}
+
+	// Create the rule first
+	existed, err := ipt.EnsureRule(Append, table, chain, rule...)
+	if err != nil {
+		t.Errorf("First EnsureRule failed: %v", err)
+	}
+	if existed {
+		t.Error("Expected first EnsureRule to return false (rule was created)")
+	}
+
+	// Try to ensure the same rule again - should return true (already exists)
+	existed, err = ipt.EnsureRule(Append, table, chain, rule...)
+	if err != nil {
+		t.Errorf("Second EnsureRule failed: %v", err)
+	}
+	if !existed {
+		t.Error("Expected second EnsureRule to return true (rule already exists)")
+	}
+
+	// Clean up
+	_, _ = ipt.DeleteRule(table, chain, rule...)
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
+func TestListRules_EmptyChain(t *testing.T) {
+	ipt, err := New(IPv4)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_EMPTY")
+	_, _ = ipt.DeleteChain(table, chain)
+	_, _ = ipt.EnsureChain(table, chain)
+
+	rules, err := ipt.ListRules(table, chain)
+	if err != nil {
+		t.Errorf("ListRules failed: %v", err)
+	}
+
+	if len(rules) != 0 {
+		t.Error("Expected no rules in empty chain")
+	}
+
+	// Clean up
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
+// Test constants and string methods
+func TestConstants(t *testing.T) {
+	// Test that all constants have expected values
+	tests := []struct {
+		name     string
+		actual   interface{}
+		expected interface{}
+	}{
+		{"TableNAT", TableNAT, Table("nat")},
+		{"TableFilter", TableFilter, Table("filter")},
+		{"TableMangle", TableMangle, Table("mangle")},
+		{"ChainPostrouting", ChainPostrouting, Chain("POSTROUTING")},
+		{"ChainPrerouting", ChainPrerouting, Chain("PREROUTING")},
+		{"ChainOutput", ChainOutput, Chain("OUTPUT")},
+		{"ChainInput", ChainInput, Chain("INPUT")},
+		{"ChainForward", ChainForward, Chain("FORWARD")},
+		{"Prepend", Prepend, RulePosition("-I")},
+		{"Append", Append, RulePosition("-A")},
+		{"IPv4", IPv4, Protocol("IPv4")},
+		{"IPv6", IPv6, Protocol("IPv6")},
+		{"TCP", TCP, TransportProtocol("tcp")},
+		{"UDP", UDP, TransportProtocol("udp")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.actual != test.expected {
+				t.Errorf("Expected %s to be %v, got %v", test.name, test.expected, test.actual)
+			}
+		})
+	}
+}
+
+func TestCmdError_ExitCode(t *testing.T) {
+	// Create a mock ExitError
+	exitErr := &exec.ExitError{}
+
+	cmdErr := &CmdError{
+		ExitError: exitErr,
+		cmd:       "test-command",
+		msg:       "test message",
+	}
+
+	// Test Error() method formatting
+	errorStr := cmdErr.Error()
+	if !strings.Contains(errorStr, "test-command") {
+		t.Error("Expected error message to contain command")
+	}
+	if !strings.Contains(errorStr, "test message") {
+		t.Error("Expected error message to contain message")
 	}
 }
