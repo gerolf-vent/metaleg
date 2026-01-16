@@ -261,13 +261,15 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 			srcIPs = rule.SrcIPv4s
 		}
 
+		presentForIPFamily := present && snatIP != nil
+
 		//
 		// Sync rule ip set (1/2)
 		//
 
 		// Ensure the ipset exists if there are any rules to apply, so they don't throw errors,
 		// because the set is missing.
-		if present {
+		if presentForIPFamily {
 			if _, err := iptm.ips.EnsureSet(ipsetSrcName, ipsetProto); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure ipset exists: %w", err))
 			}
@@ -290,7 +292,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 			Table:   iptables.TableFilter,
 			Chain:   iptablesRejectChainName,
 			Rule:    rejectRule,
-			Present: present && !isGWLocal && (!isGWRouteKnown || !isGWRouteAllocated),
+			Present: presentForIPFamily && !isGWLocal && (!isGWRouteKnown || !isGWRouteAllocated),
 		}
 		err := rejectRuleSynchronizer.Sync()
 		if err != nil {
@@ -318,7 +320,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 			Table:   iptables.TableMangle,
 			Chain:   iptablesRTMarkChainName,
 			Rule:    rtMarkRule,
-			Present: present && !isGWLocal && (isGWRouteKnown && isGWRouteAllocated),
+			Present: presentForIPFamily && !isGWLocal && (isGWRouteKnown && isGWRouteAllocated),
 		}
 		err = rtMarkRuleSynchronizer.Sync()
 		if err != nil {
@@ -342,7 +344,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 			Table:   iptables.TableNAT,
 			Chain:   iptablesSNATChainName,
 			Rule:    snatRule,
-			Present: present && isGWLocal,
+			Present: presentForIPFamily && isGWLocal,
 		}
 		err = snatRuleSynchronizer.Sync()
 		if err != nil {
@@ -364,7 +366,7 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 		}
 
 		// Delete the ipset, if rule is absent
-		if !present {
+		if !presentForIPFamily {
 			if _, err := iptm.ips.DeleteSet(ipsetSrcName); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete ipset: %w", err))
 			}
@@ -384,6 +386,10 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
 		expectedRuleIDs := make(set.Set[string], len(rules))
 		for _, rule := range rules {
+			if (ipt.IsIPv6() && rule.SNATIPv6 == nil) || (!ipt.IsIPv6() && rule.SNATIPv4 == nil) {
+				continue // No rule for this IP family
+			}
+
 			expectedRuleIDs.Add(ipsetSrcPrefix + rule.CalcIDHash(ipt.IsIPv6()))
 		}
 
