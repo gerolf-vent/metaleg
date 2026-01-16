@@ -4,8 +4,19 @@ import (
 	"net"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func requireIPSetPrivileges(t *testing.T, ips IPSet) {
+	t.Helper()
+
+	// Check if we have enough privileges by attempting a harmless ListSets call.
+	_, err := ips.ListSets()
+	if err != nil && strings.Contains(err.Error(), "Operation not permitted") {
+		t.Skipf("Skipping ipset test: ipset list operation not available: %v", err)
+	}
+}
 
 func TestProtocolString(t *testing.T) {
 	if IPv4.String() != "IPv4" {
@@ -41,6 +52,8 @@ func TestSetLifecycle(t *testing.T) {
 		t.Skip("ipset not available, skipping integration test")
 	}
 
+	requireIPSetPrivileges(t, ips)
+
 	setName := "testset1234"
 	_, _ = ips.DeleteSet(setName) // Clean up before
 
@@ -63,6 +76,8 @@ func TestEntryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Skip("ipset not available, skipping integration test")
 	}
+
+	requireIPSetPrivileges(t, ips)
 
 	setName := "testset1234"
 	_, _ = ips.DeleteSet(setName) // Clean up before
@@ -100,6 +115,8 @@ func TestNetworkSetLifecycle(t *testing.T) {
 		t.Skip("ipset not available, skipping integration test")
 	}
 
+	requireIPSetPrivileges(t, ips)
+
 	setName := "testset1234"
 	_, _ = ips.DeleteNetworkSet(setName) // Clean up before
 
@@ -122,6 +139,8 @@ func TestNetworkEntryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Skip("ipset not available, skipping integration test")
 	}
+
+	requireIPSetPrivileges(t, ips)
 
 	setName := "testnetset1234"
 	_, _ = ips.DeleteNetworkSet(setName) // Clean up before
@@ -159,6 +178,8 @@ func TestListSets(t *testing.T) {
 		t.Skip("ipset not available, skipping integration test")
 	}
 
+	requireIPSetPrivileges(t, ips)
+
 	setName1 := "testlistset1"
 	setName2 := "testlistset2"
 	_, _ = ips.DeleteSet(setName1)
@@ -193,4 +214,161 @@ func TestListSets(t *testing.T) {
 
 	_, _ = ips.DeleteSet(setName1)
 	_, _ = ips.DeleteSet(setName2)
+}
+
+func TestEnsureSet_SetAlreadyExists(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_exists"
+	_, _ = ips.DeleteSet(setName) // Clean up before
+
+	// Create the set first
+	created, err := ips.EnsureSet(setName, IPv4)
+	if err != nil {
+		t.Errorf("First EnsureSet failed: %v", err)
+	}
+	if created {
+		t.Error("Expected first EnsureSet to return false (set was created)")
+	}
+
+	// Try to ensure the same set again - should return true (already exists)
+	exists, err := ips.EnsureSet(setName, IPv4)
+	if err != nil {
+		t.Errorf("Second EnsureSet failed: %v", err)
+	}
+	if !exists {
+		t.Error("Expected second EnsureSet to return true (set already exists)")
+	}
+
+	// Clean up
+	_, _ = ips.DeleteSet(setName)
+}
+
+func TestDeleteSet_SetDoesNotExist(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_nonexistent"
+
+	// Make sure the set doesn't exist
+	_, _ = ips.DeleteSet(setName)
+
+	// Verify set doesn't exist
+	exists, err := ips.SetExists(setName)
+	if err != nil {
+		t.Errorf("SetExists failed: %v", err)
+	}
+	if exists {
+		t.Error("Expected set to not exist before test")
+	}
+
+	// Try to delete non-existent set - should return true (nothing to delete)
+	deleted, err := ips.DeleteSet(setName)
+	if err != nil {
+		t.Errorf("DeleteSet failed: %v", err)
+	}
+	if !deleted {
+		t.Error("Expected DeleteSet to return true when set doesn't exist")
+	}
+}
+
+func TestListEntries_SetDoesNotExist(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_nonexistent_list"
+
+	// Make sure the set doesn't exist
+	_, _ = ips.DeleteSet(setName)
+
+	// Try to list entries from non-existent set - should return error
+	_, err = ips.ListEntries(setName)
+	if err == nil {
+		t.Error("Expected error when listing entries from non-existent set")
+	}
+}
+
+func TestListEntries_UnexpectedSetType(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_wrong_type"
+	_, _ = ips.DeleteSet(setName) // Clean up before
+
+	// Create a hash:net set
+	_, err = ips.EnsureNetworkSet(setName, IPv4)
+	if err != nil {
+		t.Errorf("EnsureNetworkSet failed: %v", err)
+	}
+
+	// Try to list entries using hash:ip method - should return error about unexpected type
+	_, err = ips.ListEntries(setName)
+	if err == nil {
+		t.Error("Expected error when listing entries with wrong set type")
+	}
+	if err != nil && !strings.Contains(err.Error(), "unexpected ipset type") {
+		t.Errorf("Expected error about unexpected ipset type, got: %v", err)
+	}
+
+	// Clean up
+	_, _ = ips.DeleteSet(setName)
+}
+
+func TestEnsureEntry_SetDoesNotExist(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_nonexistent_entry"
+	ip := net.ParseIP("1.2.3.4")
+
+	// Make sure the set doesn't exist
+	_, _ = ips.DeleteSet(setName)
+
+	// Try to add entry to non-existent set - should return error
+	_, err = ips.EnsureEntry(setName, ip)
+	if err == nil {
+		t.Error("Expected error when adding entry to non-existent set")
+	}
+}
+
+func TestDeleteEntry_SetDoesNotExist(t *testing.T) {
+	ips, err := New()
+	if err != nil {
+		t.Skip("ipset not available, skipping integration test")
+	}
+
+	requireIPSetPrivileges(t, ips)
+
+	setName := "testset_nonexistent_del_entry"
+	ip := net.ParseIP("1.2.3.4")
+
+	// Make sure the set doesn't exist
+	_, _ = ips.DeleteSet(setName)
+
+	// Try to delete entry from non-existent set - should return error
+	_, err = ips.DeleteEntry(setName, ip)
+	if err == nil {
+		t.Error("Expected error when deleting entry from non-existent set")
+	}
 }
