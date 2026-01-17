@@ -132,10 +132,17 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	for _, ingress := range svc.Status.LoadBalancer.Ingress {
 		if ingress.IP != "" {
 			ip := net.ParseIP(ingress.IP)
-			if ip.To4() != nil && lbIPv4 == nil {
-				lbIPv4 = ip
-			} else if ip.To16() != nil && lbIPv6 == nil {
-				lbIPv6 = ip
+			if ip == nil {
+				continue
+			}
+			if ip.To4() != nil {
+				if lbIPv4 == nil {
+					lbIPv4 = ip
+				}
+			} else {
+				if lbIPv6 == nil {
+					lbIPv6 = ip
+				}
 			}
 			if lbIPv4 != nil && lbIPv6 != nil {
 				break // Both IPs found, no need to continue
