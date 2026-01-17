@@ -355,14 +355,16 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 		// Sync rule ip set (2/2)
 		//
 
-		ipsetSynchronizer := &IPSetIPsSynchronizer{
-			ips:     iptm.ips,
-			SetName: ipsetSrcName,
-			Entries: srcIPs,
-		}
-		err = ipsetSynchronizer.Sync()
-		if err != nil {
-			errs = append(errs, err)
+		if presentForIPFamily {
+			ipsetSynchronizer := &IPSetIPsSynchronizer{
+				ips:     iptm.ips,
+				SetName: ipsetSrcName,
+				Entries: srcIPs,
+			}
+			err = ipsetSynchronizer.Sync()
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
 
 		// Delete the ipset, if rule is absent
