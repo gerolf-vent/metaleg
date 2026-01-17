@@ -11,20 +11,17 @@ type EgressRuleState struct {
 
 // Determines whether traffic should be blocked
 func (s EgressRuleState) ShouldBlockTraffic(ipv6 bool) bool {
-	if ipv6 {
-		return s.SNATIPv6.IsUnspecified()
-	}
-	return s.SNATIPv4.IsUnspecified()
+	return (ipv6 && (s.SNATIPv6.IsUnspecified() || s.GWIPv6.IsUnspecified())) || (!ipv6 && (s.SNATIPv4.IsUnspecified() || s.GWIPv4.IsUnspecified()))
 }
 
 // Determines whether traffic should be redirected to the gateway node
 func (s EgressRuleState) NeedTrafficRedirection(nodeName string, ipv6 bool) bool {
-	return s.GWNodeName != nodeName && (ipv6 && !s.GWIPv6.IsUnspecified()) || (!ipv6 && !s.GWIPv4.IsUnspecified())
+	return s.GWNodeName != nodeName && !s.ShouldBlockTraffic(ipv6)
 }
 
 // Determines whether the gateway node is the local node and has a valid SNAT IP
 func (s EgressRuleState) IsGWLocal(nodeName string, ipv6 bool) bool {
-	return s.GWNodeName == nodeName && ((ipv6 && !s.SNATIPv6.IsUnspecified()) || (!ipv6 && !s.SNATIPv4.IsUnspecified()))
+	return s.GWNodeName == nodeName && !s.ShouldBlockTraffic(ipv6)
 }
 
 func (s EgressRuleState) WithNodeState(nodeState NodeState) EgressRuleState {
