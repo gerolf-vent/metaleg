@@ -377,10 +377,6 @@ func (iptm *IPTablesManager) ReconcileEgressRule(rule *EgressRule, present bool)
 }
 
 func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRule) error {
-	if len(rules) == 0 {
-		return nil
-	}
-
 	var errs []error
 
 	for _, ipt := range []iptables.IPTables{iptm.ipt4, iptm.ipt6} {
@@ -391,11 +387,6 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			}
 
 			expectedRuleIDs.Add(ipsetSrcPrefix + rule.CalcIDHash(ipt.IsIPv6()))
-		}
-
-		excludeCIDRsRuleID := ipsetExcludeDstPrefix + "4"
-		if ipt.IsIPv6() {
-			excludeCIDRsRuleID = ipsetExcludeDstPrefix + "6"
 		}
 
 		//
@@ -409,7 +400,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesRejectChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), ipsetExcludeDstPrefix) // Ignore the exclude CIDRs rule
 			},
 		}
 		err := rejectRuleCleaner.Clean()
@@ -428,7 +419,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesRTMarkChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), ipsetExcludeDstPrefix) // Ignore the exclude CIDRs rule
 			},
 		}
 		err = rtMarkRuleCleaner.Clean()
@@ -447,7 +438,7 @@ func (iptm *IPTablesManager) CleanupStaleEgressRules(rules map[string]*EgressRul
 			Chain:           iptablesSNATChainName,
 			ExpectedRuleIDs: expectedRuleIDs,
 			IgnoreRulePredicate: func(ruleSpec []string) bool {
-				return strings.Contains(strings.Join(ruleSpec, " "), excludeCIDRsRuleID) // Ignore the exclude CIDRs rule
+				return strings.Contains(strings.Join(ruleSpec, " "), ipsetExcludeDstPrefix) // Ignore the exclude CIDRs rule
 			},
 		}
 		err = snatRuleCleaner.Clean()
