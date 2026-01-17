@@ -53,7 +53,7 @@ type Config struct {
 	RouteBackend       string `env:"ROUTE_BACKEND,default=netlink"`
 	RouteTableIDOffset uint32 `env:"ROUTE_TABLE_ID_OFFSET,default=100000"`
 
-	ReconciliationInterval time.Duration `env:"RECONCILIATION_INTERVAL,default=30s"`
+	ReconciliationInterval time.Duration `env:"RECONCILIATION_INTERVAL,default=5m"`
 }
 
 func LoadConfig(ctx context.Context) (*Config, error) {
