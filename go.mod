@@ -5,6 +5,7 @@ go 1.24.3
 require (
 	github.com/bits-and-blooms/bitset v1.22.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/sethvargo/go-envconfig v1.3.0
 	github.com/vishvananda/netlink v1.3.1
 	go.universe.tf/metallb v0.15.2
 	golang.org/x/mod v0.25.0

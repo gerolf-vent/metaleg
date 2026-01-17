@@ -1,27 +1,25 @@
 package iptables
 
 import (
-	"net"
 	"strings"
 
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 )
 
-type SNATRule struct {
+type RejectRule struct {
 	SrcIPSetName string
-	SNATIP       net.IP
 	Protocol     iptables.Protocol
 }
 
-func ParseSNATRule(spec []string, protocol iptables.Protocol) (*SNATRule, bool) {
-	r := &SNATRule{
+func ParseRejectRule(spec []string, protocol iptables.Protocol) (Rule, bool) {
+	r := &RejectRule{
 		Protocol: protocol,
 	}
 
 	ruleParser := iptables.NewIPTablesSpecParser([][]string{
 		{"-m", "set"},
 		{"--match-set", "{setName}", "src"},
-		{"-j", "SNAT", "--to", "{snatIP}"},
+		{"-j", "REJECT", "--reject-with", r.rejectWith()},
 	})
 
 	values, ok := ruleParser.Parse(spec)
@@ -31,32 +29,35 @@ func ParseSNATRule(spec []string, protocol iptables.Protocol) (*SNATRule, bool) 
 
 	r.SrcIPSetName = values["setName"]
 
-	snatIP := net.ParseIP(values["snatIP"])
-	if snatIP == nil {
-		return nil, false
-	}
-	r.SNATIP = snatIP
-
 	return r, true
 }
 
-func (r *SNATRule) Spec() []string {
+func (r *RejectRule) Spec() []string {
 	if r == nil {
 		return []string{"<nil>"}
 	}
-	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "SNAT", "--to", r.SNATIP.String()}
+	return []string{"-m", "set", "--match-set", r.SrcIPSetName, "src", "-j", "REJECT", "--reject-with", r.rejectWith()}
 }
 
-func (r *SNATRule) String() string {
+func (r *RejectRule) String() string {
 	if r == nil {
 		return "<nil>"
 	}
 	return strings.Join(r.Spec(), " ")
 }
 
-func (r *SNATRule) RuleID() string {
+func (r *RejectRule) RuleID() string {
 	if r == nil {
 		return "<nil>"
 	}
 	return r.SrcIPSetName
+}
+
+func (r *RejectRule) rejectWith() string {
+	switch r.Protocol {
+	case iptables.IPv6:
+		return "icmp6-port-unreachable"
+	default:
+		return "icmp-port-unreachable" // Default to IPv4 if unknown
+	}
 }

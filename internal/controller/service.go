@@ -1,10 +1,10 @@
-package metaleg
+package controller
 
 import (
 	"context"
 	"net"
 
-	es "github.com/gerolf-vent/metaleg/internal/egress_service"
+	"github.com/gerolf-vent/metaleg/internal/core"
 	metallbv1beta1 "go.universe.tf/metallb/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -23,19 +23,19 @@ const (
 
 type serviceController struct {
 	client        client.Client
-	es            *es.EgressService
-	mlbNamespace  string
+	reconciler    *Reconciler
 	nodeName      string
+	mlbNamespace  string
 	filterForNode bool
 }
 
-func AttachServiceController(mgr ctrl.Manager, es *es.EgressService, mlbNamespace string, nodeName string, filterForNode bool) error {
+func AttachServiceController(mgr ctrl.Manager, reconciler *Reconciler, config *Config) error {
 	c := &serviceController{
 		client:        mgr.GetClient(),
-		es:            es,
-		mlbNamespace:  mlbNamespace,
-		nodeName:      nodeName,
-		filterForNode: filterForNode,
+		reconciler:    reconciler,
+		nodeName:      config.NodeName,
+		mlbNamespace:  config.MLBNamespace,
+		filterForNode: config.FilterEndpointsForNode,
 	}
 
 	// EndpointSlice -> Service mapper
@@ -73,33 +73,34 @@ func AttachServiceController(mgr ctrl.Manager, es *es.EgressService, mlbNamespac
 
 func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
-	logger.Info("Reconciling Service")
+	logger.V(1).Info("Reconciling Service")
 
 	// Fetch the Service object
 	svc := &corev1.Service{}
 	if err := c.client.Get(ctx, req.NamespacedName, svc); err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the service is not found, remove any egress rules associated with it
-			err2 := c.es.DeleteEgressRule(req.NamespacedName.String())
+			err2 := c.reconciler.DeleteEgressRule(req.NamespacedName.String())
 			if err2 != nil {
-				logger.Error(err2, "Failed to delete egress rule from egress service")
+				logger.Error(err2, "Failed to reconcile deleted Service")
 				return ctrl.Result{}, err2
 			}
-			logger.Info("Service reconciled successfully", "state", "absent", "reason", "object not found")
+			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "object not found")
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get Service from K8s API")
 		return ctrl.Result{}, err
 	}
 
+	// Check if the service has the rewriteSrcIP label set to "true"
 	if rewriteSrcIP, ok := svc.Labels[labelRewriteSourceIP]; !ok || rewriteSrcIP != "true" {
 		// If the service does not have the rewriteSrcIP label, remove any egress rules associated with it
-		err := c.es.DeleteEgressRule(req.NamespacedName.String())
+		err := c.reconciler.DeleteEgressRule(req.NamespacedName.String())
 		if err != nil {
-			logger.Error(err, "Failed to delete egress rule from egress service")
+			logger.Error(err, "Failed to reconcile deleted Service")
 			return ctrl.Result{}, err
 		}
-		logger.Info("Service reconciled successfully", "state", "absent", "reason", "label not set")
+		logger.Info("Successfully reconciled Service", "state", "absent", "reason", "label not set")
 		return ctrl.Result{}, nil
 	}
 
@@ -110,12 +111,12 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if len(slices.Items) == 0 {
-		err := c.es.DeleteEgressRule(req.NamespacedName.String())
+		err := c.reconciler.DeleteEgressRule(req.NamespacedName.String())
 		if err != nil {
-			logger.Error(err, "Failed to delete egress rule from egress service")
+			logger.Error(err, "Failed to reconcile deleted Service")
 			return ctrl.Result{}, err
 		}
-		logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoint slices found")
+		logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no endpoint slices found")
 		return ctrl.Result{}, nil
 	}
 
@@ -130,11 +131,7 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var lbIPv4 net.IP
 	var lbIPv6 net.IP
 	for _, ingress := range svc.Status.LoadBalancer.Ingress {
-		if ingress.IP != "" {
-			ip := net.ParseIP(ingress.IP)
-			if ip == nil {
-				continue
-			}
+		if ip := net.ParseIP(ingress.IP); ip != nil {
 			if ip.To4() != nil {
 				if lbIPv4 == nil {
 					lbIPv4 = ip
@@ -168,33 +165,45 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 			for _, address := range ep.Addresses {
 				ip := net.ParseIP(address)
-				if ip.To4() != nil && slice.AddressType == discoveryv1.AddressTypeIPv4 {
+				if slice.AddressType == discoveryv1.AddressTypeIPv4 && ip.To4() != nil {
 					srcIPv4s = append(srcIPv4s, ip)
-				} else if ip.To16() != nil && slice.AddressType == discoveryv1.AddressTypeIPv6 {
+				} else if slice.AddressType == discoveryv1.AddressTypeIPv6 && ip.To4() == nil {
 					srcIPv6s = append(srcIPv6s, ip)
 				}
 			}
 		}
 	}
 
-	if len(srcIPv4s) == 0 && len(srcIPv6s) == 0 {
-		err := c.es.DeleteEgressRule(req.NamespacedName.String())
+	// If no load balancer IPs are assigned or no endpoints are defined, remove any egress rules associated with it
+	if (lbIPv4.IsUnspecified() && lbIPv6.IsUnspecified()) || (len(srcIPv4s) == 0 && len(srcIPv6s) == 0) {
+		err := c.reconciler.DeleteEgressRule(req.NamespacedName.String())
 		if err != nil {
-			logger.Error(err, "Failed to delete egress rule from egress service")
+			logger.Error(err, "Failed to reconcile deleted Service")
 			return ctrl.Result{}, err
 		}
-		if c.filterForNode {
-			logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoints on this node")
+		if lbIPv4.IsUnspecified() && lbIPv6.IsUnspecified() {
+			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no load balancer IPs assigned")
+		} else if c.filterForNode {
+			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no endpoints on this node")
 		} else {
-			logger.Info("Service reconciled successfully", "state", "absent", "reason", "no endpoints found")
+			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no endpoints found")
 		}
 		return ctrl.Result{}, nil
 	}
 
-	if err := c.es.UpdateEgressRule(req.NamespacedName.String(), lbIPv4, lbIPv6, srcIPv4s, srcIPv6s, gwNodeName); err != nil {
-		logger.Error(err, "Failed to update egress rule on egress service")
+	egressRule := core.EgressRule{
+		ID:         req.NamespacedName.String(),
+		SrcIPv4s:   srcIPv4s,
+		SrcIPv6s:   srcIPv6s,
+		SNATIPv4:   lbIPv4,
+		SNATIPv6:   lbIPv6,
+		GWNodeName: gwNodeName,
+	}
+
+	if err := c.reconciler.UpdateEgressRule(egressRule); err != nil {
+		logger.Error(err, "Failed to reconcile updated Service")
 		return ctrl.Result{}, err
 	}
-	logger.Info("Service reconciled successfully", "state", "present", "lbIPv4", lbIPv4, "lbIPv6", lbIPv6, "srcIPv4s", srcIPv4s, "srcIPv6s", srcIPv6s, "gwNodeName", gwNodeName)
+	logger.Info("Successfully reconciled Service", "state", "present", "lbIPv4", lbIPv4, "lbIPv6", lbIPv6, "srcIPv4s", srcIPv4s, "srcIPv6s", srcIPv6s, "gwNodeName", gwNodeName)
 	return ctrl.Result{}, nil
 }

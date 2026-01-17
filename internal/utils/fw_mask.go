@@ -25,6 +25,15 @@ func ParseFWMask(mask string) (FWMask, error) {
 	return fwMask, nil
 }
 
+func (m *FWMask) TextUnmarshal(text string) error {
+	parsedMask, err := ParseFWMask(text)
+	if err != nil {
+		return err
+	}
+	*m = parsedMask
+	return nil
+}
+
 func (m FWMask) IsContinous() bool {
 	mask := uint32(m)
 

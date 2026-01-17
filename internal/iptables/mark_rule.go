@@ -14,7 +14,7 @@ type MarkRule struct {
 	Protocol     iptables.Protocol
 }
 
-func ParseMarkRule(spec []string, protocol iptables.Protocol) (*MarkRule, bool) {
+func ParseMarkRule(spec []string, protocol iptables.Protocol) (Rule, bool) {
 	r := &MarkRule{
 		Protocol: protocol,
 	}
