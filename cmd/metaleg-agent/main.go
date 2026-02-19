@@ -11,9 +11,11 @@ import (
 	"time"
 
 	metaleg "github.com/gerolf-vent/metaleg/internal"
-	es "github.com/gerolf-vent/metaleg/internal/egress-service"
-	fm "github.com/gerolf-vent/metaleg/internal/firewall-manager"
-	rm "github.com/gerolf-vent/metaleg/internal/route-manager"
+	es "github.com/gerolf-vent/metaleg/internal/egress_service"
+	fm "github.com/gerolf-vent/metaleg/internal/firewall_manager"
+	"github.com/gerolf-vent/metaleg/internal/firewall_manager/iptables"
+	rm "github.com/gerolf-vent/metaleg/internal/route_manager"
+	"github.com/gerolf-vent/metaleg/internal/route_manager/netlink"
 	utils "github.com/gerolf-vent/metaleg/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -112,7 +114,7 @@ func main() {
 	var firewallManager fm.FirewallManager
 	switch fmBackend {
 	case "iptables":
-		firewallManager, err = fm.NewIPTablesManager(nodeName, uint32(fwMask), fwExcludeDstCIDRs)
+		firewallManager, err = iptables.NewManager(nodeName, uint32(fwMask), fwExcludeDstCIDRs)
 		if err != nil {
 			logger.Error(err, "Failed to create iptables manager")
 			os.Exit(1)
@@ -140,7 +142,7 @@ func main() {
 	var routeManager rm.RouteManager
 	switch rmBackend {
 	case "netlink":
-		routeManager, err = rm.NewNetlinkManager(fwMask, uint32(routeTableIDOffset))
+		routeManager, err = netlink.NewManager(fwMask, uint32(routeTableIDOffset))
 		if err != nil {
 			logger.Error(err, "Failed to create netlink manager")
 			os.Exit(1)
