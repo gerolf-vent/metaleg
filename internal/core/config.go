@@ -25,8 +25,8 @@ var (
 
 type CIDRList []net.IPNet
 
-func (c *CIDRList) TextUnmarshal(text string) error {
-	for _, cidrStr := range strings.Split(text, ",") {
+func (c *CIDRList) UnmarshalText(text []byte) error {
+	for cidrStr := range strings.SplitSeq(string(text), ",") {
 		cidrStr = strings.TrimSpace(cidrStr)
 		if cidrStr == "" {
 			continue
@@ -36,11 +36,22 @@ func (c *CIDRList) TextUnmarshal(text string) error {
 		if err != nil {
 			return fmt.Errorf("invalid CIDR %q: %w", cidrStr, err)
 		}
+		if cidr == nil || cidr.IP.IsUnspecified() || cidr.Mask == nil {
+			return fmt.Errorf("unspecified CIDR %q", cidrStr)
+		}
 
 		*c = append(*c, *cidr)
 	}
 
 	return nil
+}
+
+func (c *CIDRList) String() string {
+	var cidrStrs []string
+	for _, cidr := range *c {
+		cidrStrs = append(cidrStrs, cidr.String())
+	}
+	return strings.Join(cidrStrs, ",")
 }
 
 type Config struct {
@@ -65,7 +76,7 @@ func LoadConfig(ctx context.Context) (*Config, error) {
 	if len(cfg.FWExcludeDstCIDRs) == 0 {
 		for _, cidrStr := range DefaultFWExcludeDstCIDRs {
 			_, cidr, err := net.ParseCIDR(cidrStr)
-			if err != nil {
+			if err != nil || cidr.IP.IsUnspecified() || cidr.Mask == nil {
 				panic(fmt.Sprintf("invalid default CIDR %q: %v", cidrStr, err))
 			}
 			cfg.FWExcludeDstCIDRs = append(cfg.FWExcludeDstCIDRs, *cidr)

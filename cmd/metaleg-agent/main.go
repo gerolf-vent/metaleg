@@ -129,7 +129,7 @@ func main() {
 		"nodeName", config.NodeName,
 		"fwBackend", config.FWBackend,
 		"fwMask", config.FWMask,
-		"fwExcludeDstCIDRs", config.FWExcludeDstCIDRs,
+		"fwExcludeDstCIDRs", config.FWExcludeDstCIDRs.String(),
 		"routeBackend", config.RouteBackend,
 		"routeTableIDOffset", config.RouteTableIDOffset,
 		"reconciliationInterval", config.ReconciliationInterval,
