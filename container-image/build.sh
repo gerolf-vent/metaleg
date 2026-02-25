@@ -60,8 +60,17 @@ function print_usage() {
 }
 
 #
-# Check arguments
+# Check and parse arguments
 #
+
+if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+    print_usage
+fi
+
+if [ "$#" -ne 0 ]; then
+    echo "Error: Unexpected arguments: $*" >&2
+    print_usage
+fi
 
 [ -n "$REGISTRY_ENDPOINT" ] || {
     echo "Error: Environment variable 'REGISTRY_ENDPOINT' is not set" >&2
@@ -73,15 +82,16 @@ echo "Using registry '$REGISTRY_ENDPOINT'"
 # Setup build env
 #
 
-mkdir -p "build/packages"
+build_path="$(mktemp -d -t metaleg-build-XXXXXX)"
+mkdir -p "$build_path/packages"
 
 #
 # Create local signing key
 #
 
-if ! [ -e "./build/melange.rsa" ]; then
+if ! [ -e "$build_path/melange.rsa" ]; then
     echo "Creating local signing key..."
-    melange keygen "./build/melange.rsa" || {
+    melange keygen "$build_path/melange.rsa" || {
         echo "Error: Failed to generate signing key" >&2
         exit 1
     }
@@ -96,9 +106,9 @@ echo "Building local package..."
 melange build \
     --arch x86_64 \
     --source-dir "$(realpath "$BASE_PATH/..")" \
-    --out-dir "./build/packages" \
-    --cache-dir "./build/packages/cache" \
-    --signing-key "./build/melange.rsa" \
+    --out-dir "$build_path/packages" \
+    --cache-dir "$build_path/packages/cache" \
+    --signing-key "$build_path/melange.rsa" \
     ./melange.yaml || {
     echo "Error: Failed to build package" >&2
     exit 1
@@ -110,7 +120,8 @@ melange build \
 
 echo "Logging in to registry..."
 
-export DOCKER_CONFIG="$PWD/build/.docker"
+export DOCKER_CONFIG="$build_path/.docker"
+chmod 700 "$DOCKER_CONFIG"
 if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
     echo "$REGISTRY_PASSWORD" | apko login --log-level warn "$REGISTRY_ENDPOINT" --username "$REGISTRY_USERNAME" --password-stdin || {
         echo "Error: Failed to login to registry '$REGISTRY_ENDPOINT' as user '$REGISTRY_USERNAME'" >&2
@@ -132,7 +143,7 @@ version_2="$version_1.$(echo "$version" | cut -d . -f 2)"
 
 apko publish \
     --arch x86_64 \
-    --cache-dir "./build/packages/cache" \
+    --cache-dir "$build_path/packages/cache" \
     --sbom=false \
     ./apko.yaml \
     "${REGISTRY_ENDPOINT}/metaleg-agent:${version_full}" \
