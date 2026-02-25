@@ -67,8 +67,8 @@ func (m *Manager) Reconcile(changes core.StateChange) error {
 	// Reconcile updated nodes
 	for nodeName := range changes.NodesUpdated {
 		nodeState, exists := m.state.GetNodeState(nodeName)
-		if !exists {
-			// Node no longer exists, skip
+		if !exists || !nodeState.IDAllocated {
+			// Node no longer exists or has no allocated Id, skip
 			continue
 		}
 
@@ -76,63 +76,47 @@ func (m *Manager) Reconcile(changes core.StateChange) error {
 
 		for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 			var gwIP net.IP
-			var zeroIP net.IP
-			var maskSize int
+			var dstIPNet net.IPNet
 			if family == netlink.FAMILY_V4 {
 				gwIP = nodeState.Node.IPv4
-				zeroIP = net.IPv4zero // default route
-				maskSize = 32
+				dstIPNet = net.IPNet{
+					IP:   net.IPv4zero, // default route
+					Mask: net.CIDRMask(0, 32),
+				}
 			} else {
 				gwIP = nodeState.Node.IPv6
-				zeroIP = net.IPv6zero // default route
-				maskSize = 128
+				dstIPNet = net.IPNet{
+					IP:   net.IPv6zero, // default route
+					Mask: net.CIDRMask(0, 128),
+				}
 			}
 
-			//
-			// Synchronize the netlink rule
-			//
-
-			fwMarkRule := netlink.NewRule()
-			fwMarkRule.Mark = nodeState.FWMark
-			fwMarkRule.Mask = (*uint32)(&m.fwMask)
-			fwMarkRule.Table = int(nodeState.RouteTableID)
-			fwMarkRule.Family = family
-
-			if gwIP != nil {
+			// Synchronize the netlink rules
+			if gwIP != nil && !gwIP.IsUnspecified() {
 				// Ensure the rule exists
-				errs = append(errs, m.ensureNetlinkRule(fwMarkRule))
+				errs = append(errs, m.ensureNetlinkFWMarkRule(nodeState.RouteTableID, nodeState.FWMark, family))
 			} else {
 				// Ensure the rule is deleted
 				errs = append(errs, m.deleteNetlinkRule(nodeState.RouteTableID, family))
 			}
 
-			//
-			// Synchronize the netlink route
-			//
-
-			gwRoute := &netlink.Route{
-				Dst: &net.IPNet{
-					IP:   zeroIP,
-					Mask: net.CIDRMask(0, maskSize),
-				},
-				Gw:     gwIP,
-				Table:  int(nodeState.RouteTableID),
-				Family: family,
-			}
-
-			if gwIP != nil {
+			// Synchronize the netlink routes
+			if gwIP != nil && !gwIP.IsUnspecified() {
 				// Ensure the route exists
-				errs = append(errs, m.ensureNetlinkRoute(gwRoute))
+				errs = append(errs, m.ensureNetlinkGWRoute(nodeState.RouteTableID, dstIPNet, gwIP, family))
 			} else {
 				// Ensure the route is deleted
 				errs = append(errs, m.deleteNetlinkRoute(nodeState.RouteTableID, family))
 			}
 		}
-
 	}
 
 	// Reconcile deleted nodes
 	for _, nodeState := range changes.NodesDeleted {
+		// Skip nodes with no allocated ID
+		if !nodeState.IDAllocated {
+			continue
+		}
 		for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 			// Ensure the rule is deleted
 			errs = append(errs, m.deleteNetlinkRule(nodeState.RouteTableID, family))
@@ -166,8 +150,13 @@ func (m *Manager) Cleanup() error {
 	return errors.Join(errs...)
 }
 
-func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
-	existingRules, err := netlink.RuleList(rule.Family)
+func (m *Manager) ensureNetlinkFWMarkRule(routeTableID uint32, fwMark uint32, family int) error {
+	familyStr := "ipv4"
+	if family == netlink.FAMILY_V6 {
+		familyStr = "ipv6"
+	}
+
+	existingRules, err := netlink.RuleList(family)
 	if err != nil {
 		return fmt.Errorf("failed to list netlink rules: %w", err)
 	}
@@ -178,9 +167,9 @@ func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
 			// Extra guard to not render a host unreachable by deleting unrelated rules
 			continue
 		}
-		if existingRule.Table == rule.Table {
+		if existingRule.Table == int(routeTableID) {
 			// Remove duplicate or conflicting rules
-			if present == true || (existingRule.Mark != rule.Mark) || !maskEquals(existingRule.Mask, rule.Mask) {
+			if present == true || (existingRule.Mark != fwMark) || !maskEquals(existingRule.Mask, (*uint32)(&m.fwMask)) {
 				m.logger.V(3).Info("Deleting conflicting netlink FW mark rule", "family", familyStr, "table", routeTableID, "mark", existingRule.Mark, "expectedMark", fwMark)
 				if err := netlink.RuleDel(&existingRule); err != nil {
 					return fmt.Errorf("failed to delete conflicting netlink rule: %w", err)
@@ -192,8 +181,14 @@ func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
 	}
 
 	if !present {
+		fwMarkRule := netlink.NewRule()
+		fwMarkRule.Mark = fwMark
+		fwMarkRule.Mask = (*uint32)(&m.fwMask)
+		fwMarkRule.Table = int(routeTableID)
+		fwMarkRule.Family = family
+
 		m.logger.V(2).Info("Adding netlink FW mark rule", "family", familyStr, "table", routeTableID, "mark", fwMark)
-		if err := netlink.RuleAdd(rule); err != nil {
+		if err := netlink.RuleAdd(fwMarkRule); err != nil {
 			return fmt.Errorf("failed to add netlink rule: %w", err)
 		}
 	}
@@ -202,7 +197,12 @@ func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
 }
 
 func (m *Manager) deleteNetlinkRule(routeTableID uint32, family int) error {
-	existingRules, err := netlink.RuleList(family)
+	familyStr := "ipv4"
+	if family == netlink.FAMILY_V6 {
+		familyStr = "ipv6"
+	}
+
+	existingRules, err := netlink.RuleListFiltered(family, &netlink.Rule{Table: int(routeTableID)}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("failed to list netlink rules: %w", err)
 	}
@@ -246,36 +246,102 @@ func (m *Manager) cleanupNetlinkRules(expectedRouteTableIDs set.Set[int], family
 	return errors.Join(errs...)
 }
 
-func (m *Manager) ensureNetlinkRoute(route *netlink.Route) error {
+func (m *Manager) ensureNetlinkGWRoute(routeTableID uint32, dst net.IPNet, gw net.IP, family int) error {
+	familyStr := "ipv4"
+	if family == netlink.FAMILY_V6 {
+		familyStr = "ipv6"
+	}
+
 	// Extra guard to not render a host unreachable by deleting unrelated routes
-	if route.Table < m.routeTableIDMin || route.Table > m.routeTableIDMax {
-		return fmt.Errorf("route table ID %d out of managed range", route.Table)
+	if int(routeTableID) < m.routeTableIDMin || int(routeTableID) > m.routeTableIDMax {
+		return fmt.Errorf("route table ID %d out of managed range", routeTableID)
 	}
 
 	m.logger.V(2).Info("Ensuring netlink gateway route", "family", familyStr, "table", routeTableID, "gw", gw.String())
 
-	existingRoutes, err := netlink.RouteListFiltered(route.Family, &netlink.Route{Table: route.Table}, netlink.RT_FILTER_TABLE)
+	// Get the route the gw matches
+	gwRoutes, err := netlink.RouteGet(gw)
+	if err != nil {
+		return fmt.Errorf("failed to get netlink route for gateway %q: %w", gw.String(), err)
+	}
+	if len(gwRoutes) == 0 {
+		return fmt.Errorf("no netlink route found for gateway %q", gw.String())
+	}
+
+	linkIndex := gwRoutes[0].LinkIndex
+
+	gwDst := net.IPNet{
+		IP:   gw,
+		Mask: net.CIDRMask(32, 32),
+	}
+	if family == netlink.FAMILY_V6 {
+		gwDst.Mask = net.CIDRMask(128, 128)
+	}
+
+	existingRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: int(routeTableID)}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("failed to list netlink routes: %w", err)
 	}
 
-	present := false
+	defaultRoutePresent := false
+	gwRoutePresent := false
 	for _, existingRoute := range existingRoutes {
-		if existingRoute.Table == route.Table && ipNetEquals(existingRoute.Dst, route.Dst) {
-			// Remove duplicate or conflicting routes
-			if present == true || !existingRoute.Gw.Equal(route.Gw) {
-				if err := netlink.RouteDel(&existingRoute); err != nil {
-					return fmt.Errorf("failed to delete conflicting netlink route: %w", err)
+		if existingRoute.Table == int(routeTableID) {
+			if ipNetEquals(existingRoute.Dst, &dst) {
+				// Remove duplicate or conflicting routes
+				if defaultRoutePresent == true || !existingRoute.Gw.Equal(gw) {
+					m.logger.V(3).Info("Deleting conflicting default route", "family", familyStr, "table", routeTableID, "dst", existingRoute.Dst.String(), "gw", existingRoute.Gw.String(), "expectedGw", gw.String())
+					if err := netlink.RouteDel(&existingRoute); err != nil {
+						return fmt.Errorf("failed to delete conflicting netlink default route: %w", err)
+					}
+				} else {
+					defaultRoutePresent = true
+				}
+			} else if ipNetEquals(existingRoute.Dst, &gwDst) {
+				// Remove duplicate or conflicting gw routes
+				if gwRoutePresent == true || existingRoute.LinkIndex != linkIndex {
+					m.logger.V(3).Info("Deleting conflicting gateway host route", "family", familyStr, "table", routeTableID, "dst", existingRoute.Dst.String(), "linkIndex", existingRoute.LinkIndex, "expectedLinkIndex", linkIndex)
+					if err := netlink.RouteDel(&existingRoute); err != nil {
+						return fmt.Errorf("failed to delete conflicting netlink gw route: %w", err)
+					}
+				} else {
+					gwRoutePresent = true
 				}
 			} else {
-				present = true
+				// Remove any other routes in the table
+				m.logger.V(3).Info("Deleting stale route from table", "family", familyStr, "table", routeTableID, "dst", existingRoute.Dst.String())
+				if err := netlink.RouteDel(&existingRoute); err != nil {
+					return fmt.Errorf("failed to delete stale netlink route: %w", err)
+				}
 			}
 		}
 	}
 
-	if !present {
+	if !gwRoutePresent {
+		gwRoute := &netlink.Route{
+			Dst:       &gwDst,
+			LinkIndex: linkIndex,
+			Table:     int(routeTableID),
+			Family:    family,
+		}
+
+		m.logger.V(2).Info("Adding netlink gateway host route", "family", familyStr, "table", routeTableID, "dst", gwDst.String(), "linkIndex", linkIndex)
+		if err := netlink.RouteAdd(gwRoute); err != nil {
+			return fmt.Errorf("failed to add netlink gw route: %w", err)
+		}
+	}
+
+	if !defaultRoutePresent {
+		route := &netlink.Route{
+			Dst:    &dst,
+			Gw:     gw,
+			Table:  int(routeTableID),
+			Family: family,
+		}
+
+		m.logger.V(2).Info("Adding netlink default route", "family", familyStr, "table", routeTableID, "gw", gw.String())
 		if err := netlink.RouteAdd(route); err != nil {
-			return fmt.Errorf("failed to add netlink route: %w", err)
+			return fmt.Errorf("failed to add netlink default route: %w", err)
 		}
 	}
 
@@ -283,6 +349,11 @@ func (m *Manager) ensureNetlinkRoute(route *netlink.Route) error {
 }
 
 func (m *Manager) deleteNetlinkRoute(routeTableID uint32, family int) error {
+	familyStr := "ipv4"
+	if family == netlink.FAMILY_V6 {
+		familyStr = "ipv6"
+	}
+
 	if int(routeTableID) < m.routeTableIDMin || int(routeTableID) > m.routeTableIDMax {
 		return fmt.Errorf("route table ID %d out of managed range", routeTableID)
 	}
