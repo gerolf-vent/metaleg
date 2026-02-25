@@ -8,20 +8,24 @@ import (
 	"github.com/gerolf-vent/metaleg/internal/core"
 	"github.com/gerolf-vent/metaleg/internal/utils"
 	"github.com/gerolf-vent/metaleg/internal/utils/set"
+	"github.com/go-logr/logr"
 	"github.com/vishvananda/netlink"
 )
 
 type Manager struct {
-	state              core.State
+	state  core.State
+	logger logr.Logger
+
 	fwMask             utils.FWMask
 	routeTableIDOffset uint32
 	routeTableIDMin    int
 	routeTableIDMax    int
 }
 
-func NewManager(state core.State) *Manager {
+func NewManager(state core.State, logger logr.Logger) *Manager {
 	return &Manager{
 		state:              state,
+		logger:             logger.WithName("netlink-manager"),
 		fwMask:             state.FWMask(),
 		routeTableIDOffset: state.RouteTableIDOffset(),
 		routeTableIDMin:    int(state.RouteTableIDOffset()),
@@ -67,6 +71,8 @@ func (m *Manager) Reconcile(changes core.StateChange) error {
 			// Node no longer exists, skip
 			continue
 		}
+
+		m.logger.V(1).Info("Reconciling node", "node", nodeName, "routeTableID", nodeState.RouteTableID, "fwMark", nodeState.FWMark)
 
 		for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 			var gwIP net.IP
@@ -175,6 +181,7 @@ func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
 		if existingRule.Table == rule.Table {
 			// Remove duplicate or conflicting rules
 			if present == true || (existingRule.Mark != rule.Mark) || !maskEquals(existingRule.Mask, rule.Mask) {
+				m.logger.V(3).Info("Deleting conflicting netlink FW mark rule", "family", familyStr, "table", routeTableID, "mark", existingRule.Mark, "expectedMark", fwMark)
 				if err := netlink.RuleDel(&existingRule); err != nil {
 					return fmt.Errorf("failed to delete conflicting netlink rule: %w", err)
 				}
@@ -185,6 +192,7 @@ func (m *Manager) ensureNetlinkRule(rule *netlink.Rule) error {
 	}
 
 	if !present {
+		m.logger.V(2).Info("Adding netlink FW mark rule", "family", familyStr, "table", routeTableID, "mark", fwMark)
 		if err := netlink.RuleAdd(rule); err != nil {
 			return fmt.Errorf("failed to add netlink rule: %w", err)
 		}
@@ -207,6 +215,7 @@ func (m *Manager) deleteNetlinkRule(routeTableID uint32, family int) error {
 			continue
 		}
 		if existingRule.Table == int(routeTableID) {
+			m.logger.V(2).Info("Deleting netlink rule", "family", familyStr, "table", routeTableID)
 			if err := netlink.RuleDel(&existingRule); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete netlink rule: %w", err))
 			}
@@ -243,6 +252,8 @@ func (m *Manager) ensureNetlinkRoute(route *netlink.Route) error {
 		return fmt.Errorf("route table ID %d out of managed range", route.Table)
 	}
 
+	m.logger.V(2).Info("Ensuring netlink gateway route", "family", familyStr, "table", routeTableID, "gw", gw.String())
+
 	existingRoutes, err := netlink.RouteListFiltered(route.Family, &netlink.Route{Table: route.Table}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("failed to list netlink routes: %w", err)
@@ -275,6 +286,8 @@ func (m *Manager) deleteNetlinkRoute(routeTableID uint32, family int) error {
 	if int(routeTableID) < m.routeTableIDMin || int(routeTableID) > m.routeTableIDMax {
 		return fmt.Errorf("route table ID %d out of managed range", routeTableID)
 	}
+
+	m.logger.V(2).Info("Deleting netlink routes", "family", familyStr, "table", routeTableID)
 
 	existingRoutes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: int(routeTableID)}, netlink.RT_FILTER_TABLE)
 	if err != nil {

@@ -30,3 +30,13 @@ func (sc StateChange) HasEgressRuleChanges() bool {
 func (sc StateChange) HasNodeChanges() bool {
 	return len(sc.NodesUpdated) > 0 || len(sc.NodesDeleted) > 0
 }
+
+// MarshalLog implements logr.Marshaler for structured logging
+func (sc StateChange) MarshalLog() interface{} {
+	return map[string]int{
+		"egressRulesUpdated": len(sc.EgressRulesUpdated),
+		"egressRulesDeleted": len(sc.EgressRulesDeleted),
+		"nodesUpdated":       len(sc.NodesUpdated),
+		"nodesDeleted":       len(sc.NodesDeleted),
+	}
+}

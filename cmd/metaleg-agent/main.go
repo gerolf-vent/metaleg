@@ -6,9 +6,11 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/gerolf-vent/metaleg/internal/controller"
 	"github.com/gerolf-vent/metaleg/internal/core"
+	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +36,20 @@ func main() {
 	zapOpts := zap.Options{
 		Development: devMode,
 	}
+	if devMode {
+		logLevelEnv := os.Getenv("LOG_LEVEL")
+		var logLevel int
+		var err error
+		if logLevelEnv == "" {
+			logLevel = -10 // Default to Debug level in development mode
+		} else {
+			logLevel, err = strconv.Atoi(logLevelEnv)
+			if err != nil {
+				panic("invalid LOG_LEVEL value, must be an integer")
+			}
+		}
+		zapOpts.Level = zapcore.Level(logLevel)
+	}
 	logger := zap.New(zap.UseFlagOptions(&zapOpts)).WithName("metaleg-agent")
 	ctrl.SetLogger(logger)
 
@@ -51,7 +67,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	reconciler, err := controller.NewReconciler(config)
+	reconciler, err := controller.NewReconciler(config, logger)
 	if err != nil {
 		logger.Error(err, "Failed to create egress service")
 		os.Exit(1)

@@ -12,6 +12,7 @@ import (
 	"github.com/gerolf-vent/metaleg/internal/utils/ipset"
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
 	"github.com/gerolf-vent/metaleg/internal/utils/set"
+	"github.com/go-logr/logr"
 )
 
 const (
@@ -23,7 +24,8 @@ const (
 )
 
 type Manager struct {
-	state core.State
+	state  core.State
+	logger logr.Logger
 
 	nodeName        string            // Name of the node this manager is running on
 	fwMask          utils.FWMask      // Firewall mask for egress rules
@@ -33,10 +35,11 @@ type Manager struct {
 	ips             ipset.IPSet       // IPSet interface
 }
 
-func NewManager(state core.State) (*Manager, error) {
+func NewManager(state core.State, logger logr.Logger) (*Manager, error) {
 	var err error
 
 	m := &Manager{
+		logger:          logger.WithName("iptables-manager"),
 		nodeName:        state.NodeName(),
 		fwMask:          state.FWMask(),
 		excludeDstCIDRs: state.ExcludeDstCIDRs(),
@@ -181,8 +184,9 @@ func (m *Manager) Setup() error {
 			parsedSNATSkipRule, ok := ParseSNATSkipRule(postroutingRules[0][2:])
 			if !ok || parsedSNATSkipRule.FWMask != snatSkipRule.FWMask {
 				for _, rule := range postroutingRules {
-					_, ok := ParseSNATSkipRule(rule[2:])
+					parsedSkipRule, ok := ParseSNATSkipRule(rule[2:])
 					if ok {
+						m.logger.V(3).Info("Deleting conflicting SNAT-skip rule", "protocol", ipt.Protocol(), "mask", parsedSkipRule.FWMask)
 						if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, rule[2:]...); err != nil {
 							return fmt.Errorf("failed to delete conflicting %s NAT SNAP-skip rule: %w", ipt.Protocol(), err)
 						}
@@ -421,6 +425,7 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 
 	// Reconcile deleted egress rules
 	for _, ruleState := range change.EgressRulesDeleted {
+		m.logger.V(1).Info("Deleting egress rule", "ruleID", ruleState.ID, "gwNode", ruleState.GWNodeName)
 		for _, ipt := range []iptables.IPTables{m.ipt4, m.ipt6} {
 			ruleHash := ruleState.CalcIDHash(ipt.IsIPv6())
 			ipsetSrcName := ipsetSrcPrefix + ruleHash
