@@ -151,10 +151,12 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 	// If the gw node name changed, we need to sync the old node Id assignment
 	if exists && existingState.GWNodeName != rule.GWNodeName {
 		s.logger.V(2).Info("Egress rule changing gateway node", "id", rule.ID, "oldGwNode", existingState.GWNodeName, "newGwNode", rule.GWNodeName)
-		// Changing the gw node name, might cause the node to have no egress rules attached
-		// anymore. The lazyId is 0 here, because this should NEVER allocate a new Id, only
+
+		// Changing the gw node name might cause the node to have no egress rules attached
+		// anymore. The lazyId is -1 here, because this should NEVER allocate a new Id, only
 		// possibly free an existing one.
-		_, removed := s.syncNodeId(existingState.GWNodeName, 0)
+		_, removed := s.syncNodeId(existingState.GWNodeName, -1)
+
 		// If this was the last rule using the node, the rule must be reconciled
 		// to remove the route
 		if removed {
@@ -163,7 +165,9 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 			stateChange.NodesUpdated.Add(existingState.GWNodeName)
 		}
 	}
-	lazyIdConsumed, _ = s.syncNodeId(rule.GWNodeName, uint32(lazyId))
+
+	// Ensure that the current gw node has an Id assigned
+	lazyIdConsumed, _ = s.syncNodeId(rule.GWNodeName, int64(lazyId))
 	// If a node id was allocated, this is the first rule using this node,
 	// so the rule must be reconciled to add the route
 	if lazyIdConsumed {
@@ -190,9 +194,10 @@ func (s *state) DeleteEgressRule(id string) (StateChange, error) {
 		delete(s.egressRuleStates, id)
 		stateChange.EgressRulesDeleted[id] = existingRule
 
-		// Deleting an egress rule might free up a node Id. The lazyId is 0 here,
+		// Deleting an egress rule might free up a node Id. The lazyId is -1 here,
 		// because this should NEVER allocate a new Id, only possibly free an existing one.
-		_, removed := s.syncNodeId(existingRule.GWNodeName, 0)
+		_, removed := s.syncNodeId(existingRule.GWNodeName, -1)
+
 		// If this was the last rule using the existing node, the rule must
 		// be reconciled to remove the route
 		if removed {
@@ -274,7 +279,7 @@ func (s *state) UpdateNode(node Node) (StateChange, error) {
 	s.logger.V(2).Info("Node updated in state", "name", node.Name, "existed", exists)
 
 	// Sync node Id assignment
-	lazyIdConsumed, _ = s.syncNodeId(node.Name, uint32(lazyId))
+	lazyIdConsumed, _ = s.syncNodeId(node.Name, int64(lazyId))
 
 	// If a node id was allocated, ensure that all egress rules using this node
 	// are reconciled (the node is new, but may have rules assigned already)
@@ -311,9 +316,9 @@ func (s *state) DeleteNode(name string) (StateChange, error) {
 		s.logger.V(2).Info("Deleting node from state", "name", name)
 		delete(s.nodeStates, name)
 		stateChange.NodesDeleted[name] = existingState
-		// Deleting a node might free up a node Id. The lazyId is 0 here,
-		// because this should NEVER allocate a new Id, only possibly free an existing one.
-		_, removed := s.syncNodeId(name, 0)
+		// Deleting a node might free up a node Id. The lazyId is -1 here, because this
+		// should NEVER allocate a new Id, only possibly free an existing one.
+		_, removed := s.syncNodeId(name, -1)
 		// If this was the last rule using the existing node, all rules using
 		// this node must be reconciled to remove the routes
 		if removed {
@@ -334,7 +339,7 @@ func (s *state) DeleteNode(name string) (StateChange, error) {
 	return stateChange, nil
 }
 
-func (s *state) syncNodeId(name string, lazyId uint32) (added, removed bool) {
+func (s *state) syncNodeId(name string, lazyId int64) (added, removed bool) {
 	// No locking here, must be done by caller
 
 	nodeState, nodeExists := s.nodeStates[name]
@@ -343,9 +348,13 @@ func (s *state) syncNodeId(name string, lazyId uint32) (added, removed bool) {
 		return
 	}
 
+	// Count how many rules are using the given node as gateway. This will
+	// determine whether an Id will be allocated for it.
 	var refCount uint
-	for _, rule := range s.egressRuleStates {
-		if rule.GWNodeName == name {
+	for _, ruleState := range s.egressRuleStates {
+		// Filter out rules that only perform SNAT on the given node, those don't
+		// need a route
+		if ruleState.GWNodeName == name && (ruleState.GetMode(s.nodeName, false) != EgressRuleModeSNAT || ruleState.GetMode(s.nodeName, true) != EgressRuleModeSNAT) {
 			refCount++
 		}
 	}
@@ -365,15 +374,15 @@ func (s *state) syncNodeId(name string, lazyId uint32) (added, removed bool) {
 		}
 	} else {
 		if !nodeState.IDAllocated {
-			if lazyId == 0 {
-				panic("syncNodeId called with lazyId == 0 for new node Id assignment")
+			if lazyId < 0 {
+				panic("syncNodeId called with lazyId < 0 for new node Id assignment")
 			}
 
 			nodeState.IDAllocated = true
-			nodeState.ID = lazyId
+			nodeState.ID = uint32(lazyId)
 			// We add 1 to the ID here, because fw mark with 0 would match all traffic
-			nodeState.FWMark = (lazyId + 1) << uint32(s.fwMask.Shift())
-			nodeState.RouteTableID = s.routeTableIDOffset + lazyId
+			nodeState.FWMark = (nodeState.ID + 1) << uint32(s.fwMask.Shift())
+			nodeState.RouteTableID = s.routeTableIDOffset + nodeState.ID
 			s.nodeStates[name] = nodeState
 			added = true
 			s.logger.V(2).Info("syncNodeId: allocated new ID", "name", name, "id", nodeState.ID, "fwMark", nodeState.FWMark, "routeTableID", nodeState.RouteTableID)
