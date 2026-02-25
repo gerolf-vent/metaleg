@@ -2,6 +2,30 @@ package core
 
 import "net"
 
+type EgressRuleMode uint8
+
+const (
+	// Traffic should be blocked
+	EgressRuleModeBlock EgressRuleMode = iota
+	// Traffic should be redirected to the gateway node
+	EgressRuleModeRedirect
+	// Traffic is on the gateway node and should be SNATed
+	EgressRuleModeSNAT
+)
+
+func (m EgressRuleMode) String() string {
+	switch m {
+	case EgressRuleModeBlock:
+		return "block"
+	case EgressRuleModeRedirect:
+		return "redirect"
+	case EgressRuleModeSNAT:
+		return "SNAT"
+	default:
+		return "unknown"
+	}
+}
+
 type EgressRuleState struct {
 	EgressRule
 	GWIPv4 net.IP
@@ -9,19 +33,14 @@ type EgressRuleState struct {
 	FWMark uint32
 }
 
-// Determines whether traffic should be blocked
-func (s EgressRuleState) ShouldBlockTraffic(ipv6 bool) bool {
-	return (ipv6 && (s.SNATIPv6.IsUnspecified() || s.GWIPv6.IsUnspecified())) || (!ipv6 && (s.SNATIPv4.IsUnspecified() || s.GWIPv4.IsUnspecified()))
-}
-
-// Determines whether traffic should be redirected to the gateway node
-func (s EgressRuleState) NeedTrafficRedirection(nodeName string, ipv6 bool) bool {
-	return s.GWNodeName != nodeName && !s.ShouldBlockTraffic(ipv6)
-}
-
-// Determines whether the gateway node is the local node and has a valid SNAT IP
-func (s EgressRuleState) IsGWLocal(nodeName string, ipv6 bool) bool {
-	return s.GWNodeName == nodeName && !s.ShouldBlockTraffic(ipv6)
+func (s EgressRuleState) GetMode(nodeName string, ipv6 bool) EgressRuleMode {
+	if (ipv6 && (s.SNATIPv6.IsUnspecified() || s.GWIPv6.IsUnspecified())) || (!ipv6 && (s.SNATIPv4.IsUnspecified() || s.GWIPv4.IsUnspecified())) {
+		return EgressRuleModeBlock
+	}
+	if s.GWNodeName != nodeName {
+		return EgressRuleModeRedirect
+	}
+	return EgressRuleModeSNAT
 }
 
 func (s EgressRuleState) WithNodeState(nodeState NodeState) EgressRuleState {

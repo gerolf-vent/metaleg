@@ -150,6 +150,10 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to ensure %s filter chain: %w", ipt.Protocol(), err)
 		}
 
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableFilter, iptablesRejectChainName, excludeCIDRsRule.Spec()...); err != nil {
+			return fmt.Errorf("failed to ensure %s exclude dst rule in filter chain: %w", ipt.Protocol(), err)
+		}
+
 		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableFilter, iptables.ChainForward, "-j", iptablesRejectChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s filter FORWARD rule: %w", ipt.Protocol(), err)
 		}
@@ -280,14 +284,14 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 			continue
 		}
 
-		for _, ipt := range []iptables.IPTables{m.ipt4, m.ipt6} {
-			ruleHash := ruleState.CalcIDHash(ipt.IsIPv6())
+		for _, protocol := range []iptables.Protocol{iptables.IPv4, iptables.IPv6} {
+			ruleHash := ruleState.CalcIDHash(protocol == iptables.IPv6)
 			ipsetSrcName := ipsetSrcPrefix + ruleHash
 			var ipsetProto ipset.Protocol
 			var snatIP net.IP
 			var srcIPs []net.IP
 
-			if ipt.IsIPv6() {
+			if protocol == iptables.IPv6 {
 				ipsetSrcName = "inet6:" + ipsetSrcName
 				ipsetProto = ipset.IPv6
 				snatIP = ruleState.SNATIPv6
@@ -298,127 +302,27 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 				srcIPs = ruleState.SrcIPv4s
 			}
 
-			iptablesRules := []struct {
-				Table    iptables.Table
-				Chain    iptables.Chain
-				Rule     Rule
-				Parser   func([]string, iptables.Protocol) (Rule, bool)
-				Presence bool
-			}{
-				// Used to reject traffic, if the gateway node is not local and the
-				// route to the gateway is unknown.
-				{
-					Table: iptables.TableFilter,
-					Chain: iptablesRejectChainName,
-					Rule: &RejectRule{
-						SrcIPSetName: ipsetSrcName,
-						Protocol:     ipt.Protocol(),
-					},
-					Parser:   ParseRejectRule,
-					Presence: ruleState.ShouldBlockTraffic(ipt.IsIPv6()),
-				},
-				// Used to mark packets for routing to the gateway node.
-				{
-					Table: iptables.TableMangle,
-					Chain: iptablesRTMarkChainName,
-					Rule: &MarkRule{
-						SrcIPSetName: ipsetSrcName,
-						FWMark:       ruleState.FWMark,
-						FWMask:       uint32(m.fwMask),
-						Protocol:     ipt.Protocol(),
-					},
-					Parser:   ParseMarkRule,
-					Presence: ruleState.NeedTrafficRedirection(m.nodeName, ipt.IsIPv6()),
-				},
-				// Used to SNAT traffic if the local node is the gateway node.
-				{
-					Table: iptables.TableNAT,
-					Chain: iptablesSNATChainName,
-					Rule: &SNATRule{
-						SrcIPSetName: ipsetSrcName,
-						SNATIP:       snatIP,
-						Protocol:     ipt.Protocol(),
-					},
-					Parser:   ParseSNATRule,
-					Presence: ruleState.IsGWLocal(m.nodeName, ipt.IsIPv6()),
-				},
-			}
+			if snatIP != nil && !snatIP.IsUnspecified() {
+				ruleMode := ruleState.GetMode(m.nodeName, protocol == iptables.IPv6)
+				m.logger.V(1).Info("Reconciling egress rule", "ruleID", ruleId, "mode", ruleMode.String(), "protocol", protocol, "gwNode", ruleState.GWNodeName, "fwMark", ruleState.FWMark)
 
-			//
-			// Sync src ips set (1/2)
-			//
-
-			// Ensure the ipset before any rules, so they don't throw errors, because the set
-			// is missing.
-			if _, err := m.ips.EnsureSet(ipsetSrcName, ipsetProto); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure ipset exists: %w", err))
-			}
-
-			//
-			// Sync iptables rules
-			//
-
-			for _, iptablesRule := range iptablesRules {
-				existingRules, err := ipt.ListRules(iptablesRule.Table, iptablesRule.Chain)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
+				// Ensure the source IP ipset
+				if err := m.ensureIPSet(ipsetSrcName, ipsetProto, srcIPs); err != nil {
+					errs = append(errs, err)
 					continue
 				}
 
-				present := false
-				for _, ruleSpec := range existingRules {
-					parsedRule, ok := iptablesRule.Parser(ruleSpec[2:], ipt.Protocol())
-					if !ok {
-						continue
-					}
-					if !iptablesRule.Presence || present == true || parsedRule.String() != iptablesRule.Rule.String() {
-						// Remove duplicate or conflicting rules
-						if _, err := ipt.DeleteRule(iptablesRule.Table, iptablesRule.Chain, ruleSpec[2:]...); err != nil {
-							errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
-						}
-					} else {
-						present = true
-					}
+				// Ensure iptable rules
+				if err := m.ensureIPTableRules(ruleMode, ipsetSrcName, ruleState.FWMark, snatIP, protocol); err != nil {
+					errs = append(errs, err)
 				}
-
-				if !present && iptablesRule.Presence {
-					if _, err := ipt.EnsureRule(iptables.Append, iptablesRule.Table, iptablesRule.Chain, iptablesRule.Rule.Spec()...); err != nil {
-						errs = append(errs, fmt.Errorf("failed to add iptables rule: %w", err))
-					}
+			} else {
+				// No SNAT IP, ensure ipset and iptable rules are deleted
+				if err := m.deleteIPTableRules(ipsetSrcName, protocol); err != nil {
+					errs = append(errs, err)
 				}
-			}
-
-			//
-			// Sync src ip set (2/2)
-			//
-
-			existingIPs, err := m.ips.ListEntries(ipsetSrcName)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to list ipset entries: %w", err))
-				continue
-			}
-
-			ipsToAdd := slices.DeleteFunc(slices.Clone(srcIPs), func(ip net.IP) bool {
-				return slices.ContainsFunc(existingIPs, func(other net.IP) bool {
-					return ip.Equal(other)
-				})
-			})
-
-			ipsToRemove := slices.DeleteFunc(slices.Clone(existingIPs), func(ip net.IP) bool {
-				return slices.ContainsFunc(srcIPs, func(other net.IP) bool {
-					return ip.Equal(other)
-				})
-			})
-
-			for _, ip := range ipsToAdd {
-				if _, err := m.ips.EnsureEntry(ipsetSrcName, ip); err != nil {
-					errs = append(errs, fmt.Errorf("failed to add ip %s to ipset %s: %w", ip.String(), ipsetSrcName, err))
-				}
-			}
-
-			for _, ip := range ipsToRemove {
-				if _, err := m.ips.DeleteEntry(ipsetSrcName, ip); err != nil {
-					errs = append(errs, fmt.Errorf("failed to remove ip %s from ipset %s: %w", ip.String(), ipsetSrcName, err))
+				if _, err := m.ips.DeleteSet(ipsetSrcName); err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete ipset: %w", err))
 				}
 			}
 		}
@@ -427,55 +331,19 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 	// Reconcile deleted egress rules
 	for _, ruleState := range change.EgressRulesDeleted {
 		m.logger.V(1).Info("Deleting egress rule", "ruleID", ruleState.ID, "gwNode", ruleState.GWNodeName)
-		for _, ipt := range []iptables.IPTables{m.ipt4, m.ipt6} {
-			ruleHash := ruleState.CalcIDHash(ipt.IsIPv6())
+		for _, protocol := range []iptables.Protocol{iptables.IPv4, iptables.IPv6} {
+			ruleHash := ruleState.CalcIDHash(protocol == iptables.IPv6)
 			ipsetSrcName := ipsetSrcPrefix + ruleHash
-			if ipt.IsIPv6() {
+			if protocol == iptables.IPv6 {
 				ipsetSrcName = "inet6:" + ipsetSrcName
 			}
 
-			iptablesChains := []struct {
-				Table iptables.Table
-				Chain iptables.Chain
-			}{
-				{
-					Table: iptables.TableFilter,
-					Chain: iptablesRejectChainName,
-				},
-				{
-					Table: iptables.TableMangle,
-					Chain: iptablesRTMarkChainName,
-				},
-				{
-					Table: iptables.TableNAT,
-					Chain: iptablesSNATChainName,
-				},
+			// Delete iptable rules
+			if err := m.deleteIPTableRules(ipsetSrcName, protocol); err != nil {
+				errs = append(errs, err)
 			}
 
-			//
-			// Delete iptables rules
-			//
-
-			for _, chain := range iptablesChains {
-				ruleSpecs, err := ipt.ListRules(chain.Table, chain.Chain)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
-					continue
-				}
-
-				for _, ruleSpec := range ruleSpecs {
-					if strings.Contains(strings.Join(ruleSpec, " "), ipsetSrcName) {
-						if _, err := ipt.DeleteRule(chain.Table, chain.Chain, ruleSpec[2:]...); err != nil {
-							errs = append(errs, fmt.Errorf("failed to delete iptables rule: %w", err))
-						}
-					}
-				}
-			}
-
-			//
-			// Delete the ipset
-			//
-
+			// Delete ipset
 			if _, err := m.ips.DeleteSet(ipsetSrcName); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete ipset: %w", err))
 			}
@@ -539,6 +407,185 @@ func (m *Manager) Cleanup() error {
 							}
 						}
 					}
+				}
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (m *Manager) ensureIPSet(setName string, protocol ipset.Protocol, ips []net.IP) error {
+	var errs []error
+
+	if _, err := m.ips.EnsureSet(setName, protocol); err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure ipset exists: %w", err))
+	}
+
+	existingIPs, err := m.ips.ListEntries(setName)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to list ipset entries: %w", err))
+		return errors.Join(errs...)
+	}
+
+	ipsToAdd := slices.DeleteFunc(slices.Clone(ips), func(ip net.IP) bool {
+		return slices.ContainsFunc(existingIPs, func(other net.IP) bool {
+			return ip.Equal(other)
+		})
+	})
+
+	ipsToRemove := slices.DeleteFunc(slices.Clone(existingIPs), func(ip net.IP) bool {
+		return slices.ContainsFunc(ips, func(other net.IP) bool {
+			return ip.Equal(other)
+		})
+	})
+
+	for _, ip := range ipsToAdd {
+		if _, err := m.ips.EnsureEntry(setName, ip); err != nil {
+			errs = append(errs, fmt.Errorf("failed to add ip %s to ipset %s: %w", ip.String(), setName, err))
+		}
+	}
+
+	for _, ip := range ipsToRemove {
+		if _, err := m.ips.DeleteEntry(setName, ip); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove ip %s from ipset %s: %w", ip.String(), setName, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (m *Manager) ensureIPTableRules(ruleMode core.EgressRuleMode, ipsetSrcName string, fwMark uint32, snatIP net.IP, protocol iptables.Protocol) error {
+	var ipt iptables.IPTables
+	if protocol == iptables.IPv6 {
+		ipt = m.ipt6
+	} else {
+		ipt = m.ipt4
+	}
+
+	m.logger.V(2).Info("Ensuring iptables rules", "mode", ruleMode.String(), "protocol", protocol, "ipset", ipsetSrcName, "fwMark", fwMark, "snatIP", snatIP.String())
+
+	var errs []error
+
+	iptablesRules := []struct {
+		Table    iptables.Table
+		Chain    iptables.Chain
+		Rule     Rule
+		Parser   func([]string, iptables.Protocol) (Rule, bool)
+		Presence bool
+	}{
+		// Used to reject traffic, if the gateway node is not local and the
+		// route to the gateway is unknown.
+		{
+			Table: iptables.TableFilter,
+			Chain: iptablesRejectChainName,
+			Rule: &RejectRule{
+				SrcIPSetName: ipsetSrcName,
+				Protocol:     protocol,
+			},
+			Parser:   ParseRejectRule,
+			Presence: ruleMode == core.EgressRuleModeBlock,
+		},
+		// Used to mark packets for routing to the gateway node.
+		{
+			Table: iptables.TableMangle,
+			Chain: iptablesRTMarkChainName,
+			Rule: &MarkRule{
+				SrcIPSetName: ipsetSrcName,
+				FWMark:       fwMark,
+				FWMask:       uint32(m.fwMask),
+				Protocol:     protocol,
+			},
+			Parser:   ParseMarkRule,
+			Presence: ruleMode == core.EgressRuleModeRedirect,
+		},
+		// Used to SNAT traffic if the local node is the gateway node.
+		{
+			Table: iptables.TableNAT,
+			Chain: iptablesSNATChainName,
+			Rule: &SNATRule{
+				SrcIPSetName: ipsetSrcName,
+				SNATIP:       snatIP,
+				Protocol:     protocol,
+			},
+			Parser:   ParseSNATRule,
+			Presence: ruleMode == core.EgressRuleModeSNAT,
+		},
+	}
+
+	for _, iptablesRule := range iptablesRules {
+		existingRules, err := ipt.ListRules(iptablesRule.Table, iptablesRule.Chain)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
+			continue
+		}
+
+		present := false
+		for _, ruleSpec := range existingRules {
+			parsedRule, ok := iptablesRule.Parser(ruleSpec[2:], ipt.Protocol())
+			if !ok {
+				continue
+			}
+			if !iptablesRule.Presence || present == true || parsedRule.String() != iptablesRule.Rule.String() {
+				// Remove duplicate or conflicting rules
+				m.logger.V(3).Info("Deleting conflicting iptables rule", "table", iptablesRule.Table, "chain", iptablesRule.Chain, "rule", parsedRule.String())
+				if _, err := ipt.DeleteRule(iptablesRule.Table, iptablesRule.Chain, ruleSpec[2:]...); err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete conflicting iptables rule: %w", err))
+				}
+			} else {
+				present = true
+			}
+		}
+
+		if !present && iptablesRule.Presence {
+			if _, err := ipt.EnsureRule(iptables.Append, iptablesRule.Table, iptablesRule.Chain, iptablesRule.Rule.Spec()...); err != nil {
+				errs = append(errs, fmt.Errorf("failed to add iptables rule: %w", err))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (m *Manager) deleteIPTableRules(ipsetSrcName string, protocol iptables.Protocol) error {
+	var ipt iptables.IPTables
+	if protocol == iptables.IPv6 {
+		ipt = m.ipt6
+	} else {
+		ipt = m.ipt4
+	}
+
+	var errs []error
+
+	iptablesChains := []struct {
+		Table iptables.Table
+		Chain iptables.Chain
+	}{
+		{
+			Table: iptables.TableFilter,
+			Chain: iptablesRejectChainName,
+		},
+		{
+			Table: iptables.TableMangle,
+			Chain: iptablesRTMarkChainName,
+		},
+		{
+			Table: iptables.TableNAT,
+			Chain: iptablesSNATChainName,
+		},
+	}
+
+	for _, chain := range iptablesChains {
+		ruleSpecs, err := ipt.ListRules(chain.Table, chain.Chain)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list iptables rules: %w", err))
+			continue
+		}
+
+		for _, ruleSpec := range ruleSpecs {
+			if strings.Contains(strings.Join(ruleSpec, " "), ipsetSrcName) {
+				if _, err := ipt.DeleteRule(chain.Table, chain.Chain, ruleSpec[2:]...); err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete iptables rule: %w", err))
 				}
 			}
 		}
