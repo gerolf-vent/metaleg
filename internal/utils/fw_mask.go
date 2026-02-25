@@ -25,8 +25,8 @@ func ParseFWMask(mask string) (FWMask, error) {
 	return fwMask, nil
 }
 
-func (m *FWMask) TextUnmarshal(text string) error {
-	parsedMask, err := ParseFWMask(text)
+func (m *FWMask) UnmarshalText(text []byte) error {
+	parsedMask, err := ParseFWMask(string(text))
 	if err != nil {
 		return err
 	}
