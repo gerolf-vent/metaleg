@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   go-test:
     build:
@@ -7,13 +5,16 @@ services:
       dockerfile: container-image/Dockerfile.test
     container_name: go-test
     working_dir: /src
+    environment:
+      - GOPATH=/go
     volumes:
-      - .:/src
+      - .:/src:ro
+      - go-deps:/go
     cap_add:
       - NET_ADMIN
     entrypoint:
       - sh
-      - -c  
+      - -c
       - |
         echo "Test environment:"
         uname -a
@@ -24,4 +25,10 @@ services:
 
         echo
         echo "Running tests..."
-        go test -v ./...
+        go test "$@"
+    command:
+    - -v
+    - "./..."
+
+volumes:
+  go-deps:
