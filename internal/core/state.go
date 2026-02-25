@@ -161,8 +161,17 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 		// to remove the route
 		if removed {
 			s.logger.V(2).Info("Old gateway node removed after GW change", "nodeName", existingState.GWNodeName)
-			
-			stateChange.NodesUpdated.Add(existingState.GWNodeName)
+
+			nodeState, nodeExists := s.nodeStates[existingState.GWNodeName]
+			if nodeExists {
+				stateChange.NodesDeleted[existingState.GWNodeName] = nodeState
+			} else {
+				stateChange.NodesDeleted[existingState.GWNodeName] = NodeState{
+					Node: Node{
+						Name: existingState.GWNodeName,
+					},
+				}
+			}
 		}
 	}
 
@@ -202,7 +211,17 @@ func (s *state) DeleteEgressRule(id string) (StateChange, error) {
 		// be reconciled to remove the route
 		if removed {
 			s.logger.V(2).Info("Gateway node removed after deleting last egress rule", "nodeName", existingRule.GWNodeName)
-			stateChange.NodesUpdated.Add(existingRule.GWNodeName)
+
+			nodeState, nodeExists := s.nodeStates[existingRule.GWNodeName]
+			if nodeExists {
+				stateChange.NodesDeleted[existingRule.GWNodeName] = nodeState
+			} else {
+				stateChange.NodesDeleted[existingRule.GWNodeName] = NodeState{
+					Node: Node{
+						Name: existingRule.GWNodeName,
+					},
+				}
+			}
 		}
 	} else {
 		s.logger.V(2).Info("DeleteEgressRule: rule not found", "id", id)
@@ -287,6 +306,7 @@ func (s *state) UpdateNode(node Node) (StateChange, error) {
 		nodeState := s.nodeStates[node.Name]
 		s.logger.V(2).Info("Node ID allocated", "name", node.Name, "id", nodeState.ID, "fwMark", nodeState.FWMark, "routeTableID", nodeState.RouteTableID)
 
+		stateChange.NodesUpdated.Add(node.Name)
 		for _, rule := range s.egressRuleStates {
 			if rule.GWNodeName == node.Name {
 				s.logger.V(3).Info("Adding egress rule to state change", "ruleId", rule.ID, "nodeName", node.Name)
@@ -296,6 +316,8 @@ func (s *state) UpdateNode(node Node) (StateChange, error) {
 	} else {
 		nodeState := s.nodeStates[node.Name]
 		s.logger.V(2).Info("Node ID deallocated (no egress rules)", "name", node.Name, "routeTableID", nodeState.RouteTableID)
+
+		stateChange.NodesDeleted[node.Name] = existingState
 	}
 
 	s.logger.V(2).Info("UpdateNode completed", "name", node.Name, "stateChange", stateChange)
