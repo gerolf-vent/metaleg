@@ -39,6 +39,7 @@ func NewManager(state core.State, logger logr.Logger) (*Manager, error) {
 	var err error
 
 	m := &Manager{
+		state:           state,
 		logger:          logger.WithName("iptables-manager"),
 		nodeName:        state.NodeName(),
 		fwMask:          state.FWMask(),
