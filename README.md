@@ -70,6 +70,7 @@ Because this controller currently uses firewall marks and routes on the standart
 | CNI | Status | Notes |
 | --- | ------ | ----- |
 | [kube-router](https://kube-router.io) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
+| [Calico](https://www.tigera.io/project-calico) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
 | [Cilium](https://cilium.io) | Not working |
 
 ## Testing
