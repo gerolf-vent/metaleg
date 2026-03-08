@@ -141,7 +141,11 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 		}
 	}()
 
+	// Remember the old gw node name for detecting changes
+	oldGwNodeName := existingState.GWNodeName
+
 	// Update the egress rule
+	// This has to be done before syncing the node Id, because `syncNodeId` uses the stored state
 	existingState.EgressRule = rule
 	s.egressRuleStates[rule.ID] = existingState
 	stateChange.EgressRulesUpdated.Add(rule.ID)
@@ -149,26 +153,26 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 	s.logger.V(2).Info("Egress rule updated in state", "id", rule.ID, "gwNodeName", rule.GWNodeName, "existed", exists)
 
 	// If the gw node name changed, we need to sync the old node Id assignment
-	if exists && existingState.GWNodeName != rule.GWNodeName {
-		s.logger.V(2).Info("Egress rule changing gateway node", "id", rule.ID, "oldGwNode", existingState.GWNodeName, "newGwNode", rule.GWNodeName)
+	if exists && oldGwNodeName != rule.GWNodeName {
+		s.logger.V(2).Info("Egress rule changing gateway node", "id", rule.ID, "oldGwNode", oldGwNodeName, "newGwNode", rule.GWNodeName)
 
 		// Changing the gw node name might cause the node to have no egress rules attached
 		// anymore. The lazyId is -1 here, because this should NEVER allocate a new Id, only
 		// possibly free an existing one.
-		_, removed := s.syncNodeId(existingState.GWNodeName, -1)
+		_, removed := s.syncNodeId(oldGwNodeName, -1)
 
 		// If this was the last rule using the node, the rule must be reconciled
 		// to remove the route
 		if removed {
-			s.logger.V(2).Info("Old gateway node removed after GW change", "nodeName", existingState.GWNodeName)
+			s.logger.V(2).Info("Old gateway node removed after GW change", "nodeName", oldGwNodeName)
 
-			nodeState, nodeExists := s.nodeStates[existingState.GWNodeName]
+			nodeState, nodeExists := s.nodeStates[oldGwNodeName]
 			if nodeExists {
-				stateChange.NodesDeleted[existingState.GWNodeName] = nodeState
+				stateChange.NodesDeleted[oldGwNodeName] = nodeState
 			} else {
-				stateChange.NodesDeleted[existingState.GWNodeName] = NodeState{
+				stateChange.NodesDeleted[oldGwNodeName] = NodeState{
 					Node: Node{
-						Name: existingState.GWNodeName,
+						Name: oldGwNodeName,
 					},
 				}
 			}
@@ -177,6 +181,7 @@ func (s *state) UpdateEgressRule(rule EgressRule) (StateChange, error) {
 
 	// Ensure that the current gw node has an Id assigned
 	lazyIdConsumed, _ = s.syncNodeId(rule.GWNodeName, int64(lazyId))
+
 	// If a node id was allocated, this is the first rule using this node,
 	// so the rule must be reconciled to add the route
 	if lazyIdConsumed {
