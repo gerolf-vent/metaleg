@@ -5,8 +5,10 @@ import "net"
 type EgressRuleMode uint8
 
 const (
+	// Traffic should be untouched
+	EgressRuleModeUnconfigured EgressRuleMode = iota
 	// Traffic should be blocked
-	EgressRuleModeBlock EgressRuleMode = iota
+	EgressRuleModeBlock
 	// Traffic should be redirected to the gateway node
 	EgressRuleModeRedirect
 	// Traffic is on the gateway node and should be SNATed
@@ -34,7 +36,10 @@ type EgressRuleState struct {
 }
 
 func (s EgressRuleState) GetMode(nodeName string, ipv6 bool) EgressRuleMode {
-	if (ipv6 && (s.SNATIPv6.IsUnspecified() || s.GWIPv6.IsUnspecified())) || (!ipv6 && (s.SNATIPv4.IsUnspecified() || s.GWIPv4.IsUnspecified())) {
+	if (ipv6 && s.SNATIPv6.IsUnspecified()) || (!ipv6 && s.SNATIPv4.IsUnspecified()) {
+		return EgressRuleModeUnconfigured
+	}
+	if s.FWMark == 0 || (ipv6 && s.GWIPv6.IsUnspecified()) || (!ipv6 && s.GWIPv4.IsUnspecified()) {
 		return EgressRuleModeBlock
 	}
 	if s.GWNodeName != nodeName {

@@ -302,8 +302,9 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 				srcIPs = ruleState.SrcIPv4s
 			}
 
-			if snatIP != nil && !snatIP.IsUnspecified() {
-				ruleMode := ruleState.GetMode(m.nodeName, protocol == iptables.IPv6)
+			ruleMode := ruleState.GetMode(m.nodeName, protocol == iptables.IPv6)
+
+			if ruleMode != core.EgressRuleModeUnconfigured {
 				m.logger.V(1).Info("Reconciling egress rule", "ruleID", ruleId, "mode", ruleMode.String(), "protocol", protocol, "gwNode", ruleState.GWNodeName, "fwMark", ruleState.FWMark)
 
 				// Ensure the source IP ipset
@@ -317,10 +318,12 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 					errs = append(errs, err)
 				}
 			} else {
-				// No SNAT IP, ensure ipset and iptable rules are deleted
+				m.logger.V(1).Info("Deleting egress rule", "ruleID", ruleState.ID, "gwNode", ruleState.GWNodeName)
+
 				if err := m.deleteIPTableRules(ipsetSrcName, protocol); err != nil {
 					errs = append(errs, err)
 				}
+
 				if _, err := m.ips.DeleteSet(ipsetSrcName); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete ipset: %w", err))
 				}
@@ -338,12 +341,10 @@ func (m *Manager) Reconcile(change core.StateChange) error {
 				ipsetSrcName = "inet6:" + ipsetSrcName
 			}
 
-			// Delete iptable rules
 			if err := m.deleteIPTableRules(ipsetSrcName, protocol); err != nil {
 				errs = append(errs, err)
 			}
 
-			// Delete ipset
 			if _, err := m.ips.DeleteSet(ipsetSrcName); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete ipset: %w", err))
 			}
