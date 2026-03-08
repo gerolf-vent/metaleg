@@ -36,16 +36,16 @@ type EgressRuleState struct {
 }
 
 func (s EgressRuleState) GetMode(nodeName string, ipv6 bool) EgressRuleMode {
-	if (ipv6 && s.SNATIPv6.IsUnspecified()) || (!ipv6 && s.SNATIPv4.IsUnspecified()) {
+	if (ipv6 && (s.SNATIPv6 == nil || s.SNATIPv6.IsUnspecified())) || (!ipv6 && (s.SNATIPv4 == nil || s.SNATIPv4.IsUnspecified())) {
 		return EgressRuleModeUnconfigured
 	}
-	if s.FWMark == 0 || (ipv6 && s.GWIPv6.IsUnspecified()) || (!ipv6 && s.GWIPv4.IsUnspecified()) {
+	if s.GWNodeName == nodeName {
+		return EgressRuleModeSNAT
+	}
+	if s.FWMark == 0 || (ipv6 && (s.GWIPv6 == nil || s.GWIPv6.IsUnspecified())) || (!ipv6 && (s.GWIPv4 == nil || s.GWIPv4.IsUnspecified())) {
 		return EgressRuleModeBlock
 	}
-	if s.GWNodeName != nodeName {
-		return EgressRuleModeRedirect
-	}
-	return EgressRuleModeSNAT
+	return EgressRuleModeRedirect
 }
 
 func (s EgressRuleState) WithNodeState(nodeState NodeState) EgressRuleState {
