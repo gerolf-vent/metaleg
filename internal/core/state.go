@@ -384,11 +384,11 @@ func (s *state) syncNodeId(name string, lazyId int64) (added, removed bool) {
 
 	// Count how many rules are using the given node as gateway. This will
 	// determine whether an Id will be allocated for it.
+	// Rules where the gateway is the local node are excluded — those are handled
+	// locally via SNAT and don't need routing infrastructure (FWMark/RouteTableID).
 	var refCount uint
 	for _, ruleState := range s.egressRuleStates {
-		// Filter out rules that only perform SNAT on the given node, those don't
-		// need a route
-		if ruleState.GWNodeName == name && (ruleState.GetMode(s.nodeName, false) != EgressRuleModeSNAT || ruleState.GetMode(s.nodeName, true) != EgressRuleModeSNAT) {
+		if ruleState.GWNodeName == name && name != s.nodeName {
 			refCount++
 		}
 	}
