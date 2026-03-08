@@ -56,6 +56,7 @@ func NewReconciler(config *core.Config, logger logr.Logger) (*Reconciler, error)
 		state:                  state,
 		reconciliationInterval: config.ReconciliationInterval,
 		managers:               managers,
+		logger:                 logger,
 	}, nil
 }
 
