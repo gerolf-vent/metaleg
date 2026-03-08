@@ -91,9 +91,18 @@ func main() {
 	cfg := ctrl.GetConfigOrDie()
 
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
-	discoveryv1.AddToScheme(scheme)
-	metallbv1beta1.AddToScheme(scheme)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add corev1 to scheme")
+		os.Exit(1)
+	}
+	if err := discoveryv1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add discoveryv1 to scheme")
+		os.Exit(1)
+	}
+	if err := metallbv1beta1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add metallbv1beta1 to scheme")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:         scheme,
