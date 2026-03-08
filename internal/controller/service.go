@@ -175,13 +175,15 @@ func (c *serviceController) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// If no load balancer IPs are assigned or no endpoints are defined, remove any egress rules associated with it
-	if (lbIPv4.IsUnspecified() && lbIPv6.IsUnspecified()) || (len(srcIPv4s) == 0 && len(srcIPv6s) == 0) {
+	noLBIPv4 := lbIPv4 == nil || lbIPv4.IsUnspecified()
+	noLBIPv6 := lbIPv6 == nil || lbIPv6.IsUnspecified()
+	if (noLBIPv4 && noLBIPv6) || (len(srcIPv4s) == 0 && len(srcIPv6s) == 0) {
 		err := c.reconciler.DeleteEgressRule(req.NamespacedName.String())
 		if err != nil {
 			logger.Error(err, "Failed to reconcile deleted Service")
 			return ctrl.Result{}, err
 		}
-		if lbIPv4.IsUnspecified() && lbIPv6.IsUnspecified() {
+		if noLBIPv4 && noLBIPv6 {
 			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no load balancer IPs assigned")
 		} else if c.filterForNode {
 			logger.Info("Successfully reconciled Service", "state", "absent", "reason", "no endpoints on this node")
