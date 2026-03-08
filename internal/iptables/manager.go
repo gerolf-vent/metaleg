@@ -527,6 +527,10 @@ func (m *Manager) ensureIPTableRules(ruleMode core.EgressRuleMode, ipsetSrcName 
 			if !ok {
 				continue
 			}
+			// Only consider rules with the same RuleID (ipset name) as related
+			if parsedRule.RuleID() != iptablesRule.Rule.RuleID() {
+				continue
+			}
 			if !iptablesRule.Presence || present == true || parsedRule.String() != iptablesRule.Rule.String() {
 				// Remove duplicate or conflicting rules
 				m.logger.V(3).Info("Deleting conflicting iptables rule", "table", iptablesRule.Table, "chain", iptablesRule.Chain, "rule", parsedRule.String())
