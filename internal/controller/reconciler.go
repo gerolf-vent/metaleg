@@ -68,6 +68,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 	// Setup all managers
 	for _, manager := range r.managers {
 		if err := manager.Setup(); err != nil {
+			r.Unlock()
 			return fmt.Errorf("failed to setup manager %q: %w", manager.Name(), err)
 		}
 	}
