@@ -341,21 +341,28 @@ func (s *state) DeleteNode(name string) (StateChange, error) {
 	existingState, exists := s.nodeStates[name]
 	if exists {
 		s.logger.V(2).Info("Deleting node from state", "name", name)
+
+		// Release the node's ID if allocated
+		if existingState.IDAllocated {
+			s.logger.V(2).Info("Releasing node ID", "name", name, "id", existingState.ID)
+			s.idAllocator.Release(uint(existingState.ID))
+		}
+
 		delete(s.nodeStates, name)
 		stateChange.NodesDeleted[name] = existingState
-		// Deleting a node might free up a node Id. The lazyId is -1 here, because this
-		// should NEVER allocate a new Id, only possibly free an existing one.
-		_, removed := s.syncNodeId(name, -1)
-		// If this was the last rule using the existing node, all rules using
-		// this node must be reconciled to remove the routes
-		if removed {
-			s.logger.V(2).Info("Node ID removed after deleting node", "name", name)
-			for _, rule := range s.egressRuleStates {
-				if rule.GWNodeName == name {
-					s.logger.V(3).Info("Adding egress rule to state change after node deletion", "ruleId", rule.ID, "nodeName", name)
-					stateChange.EgressRulesUpdated.Add(rule.ID)
-				}
+
+		// All egress rules using this node must be reconciled
+		for id, rule := range s.egressRuleStates {
+			if rule.GWNodeName == name {
+				s.logger.V(3).Info("Adding egress rule to state change after node deletion", "ruleId", rule.ID, "nodeName", name)
+				stateChange.EgressRulesUpdated.Add(rule.ID)
 			}
+
+			// Cleanup any gw info from the egress rule state
+			rule.GWIPv4 = nil
+			rule.GWIPv6 = nil
+			rule.FWMark = 0
+			s.egressRuleStates[id] = rule
 		}
 	} else {
 		s.logger.V(2).Info("DeleteNode: node not found", "name", name)
