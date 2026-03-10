@@ -2,13 +2,13 @@ services:
   go-test:
     build:
       context: .
-      dockerfile: container-image/Dockerfile.test
-    container_name: go-test
+      dockerfile: container-image/Dockerfile.dev
     working_dir: /src
     environment:
       - GOPATH=/go
+      - METALEG_TEST_NETLINK=yes
     volumes:
-      - .:/src:ro
+      - .:/src
       - go-deps:/go
     cap_add:
       - NET_ADMIN

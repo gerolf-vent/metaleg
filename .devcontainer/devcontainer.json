@@ -1,0 +1,21 @@
+{
+    "name": "metaleg-dev",
+    "dockerComposeFile": "../docker-compose.yaml",
+    "service": "go-test",
+    "workspaceFolder": "/src",
+    "overrideCommand": true,
+    "shutdownAction": "stopCompose",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.go"
+            ],
+            "settings": {
+                "go.testEnvVars": {
+                    "METALEG_TEST_NETLINK": "yes"
+                },
+                "go.coverOnSingleTest": true
+            }
+        }
+    }
+}
