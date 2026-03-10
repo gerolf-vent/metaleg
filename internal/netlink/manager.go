@@ -333,10 +333,11 @@ func (m *Manager) ensureNetlinkGWRoute(routeTableID uint32, dst net.IPNet, gw ne
 
 	if !defaultRoutePresent {
 		route := &netlink.Route{
-			Dst:    &dst,
-			Gw:     gw,
-			Table:  int(routeTableID),
-			Family: family,
+			Dst:       &dst,
+			Gw:        gw,
+			LinkIndex: linkIndex,
+			Table:     int(routeTableID),
+			Family:    family,
 		}
 
 		m.logger.V(2).Info("Adding netlink default route", "family", familyStr, "table", routeTableID, "gw", gw.String())
