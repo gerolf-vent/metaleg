@@ -1178,3 +1178,197 @@ func TestScenario_ManyRulesExhaustPool(t *testing.T) {
 		t.Error("Expected pool exhaustion error")
 	}
 }
+
+// --- Lines 173-178: UpdateEgressRule GW change, old node removed (if removed block) ---
+
+func TestUpdateEgressRule_ChangeGWNode_RemovedNodeStateInNodesDeleted(t *testing.T) {
+	s := newTestState(t)
+
+	// Register both nodes with full IP info
+	nodeA := Node{Name: "node-a", IPv4: net.ParseIP("192.168.1.1"), IPv6: net.ParseIP("fd00::1")}
+	nodeB := Node{Name: "node-b", IPv4: net.ParseIP("192.168.1.2"), IPv6: net.ParseIP("fd00::2")}
+	if _, err := s.UpdateNode(nodeA); err != nil {
+		t.Fatalf("UpdateNode node-a: %v", err)
+	}
+	if _, err := s.UpdateNode(nodeB); err != nil {
+		t.Fatalf("UpdateNode node-b: %v", err)
+	}
+
+	// Create rule pointing to node-a (node-a gets an ID allocated)
+	rule := EgressRule{
+		ID:         "rule1",
+		GWNodeName: "node-a",
+		SrcIPv4s:   []net.IP{net.ParseIP("10.0.0.1")},
+		SNATIPv4:   net.ParseIP("1.2.3.4"),
+	}
+	if _, err := s.UpdateEgressRule(rule); err != nil {
+		t.Fatalf("UpdateEgressRule: %v", err)
+	}
+
+	// Capture node-a's allocated state before the GW change
+	nsA, _ := s.GetNodeState("node-a")
+	if !nsA.IDAllocated {
+		t.Fatal("Expected node-a to have ID allocated before GW change")
+	}
+	savedFWMark := nsA.FWMark
+	savedRouteTableID := nsA.RouteTableID
+
+	// Change GW from node-a to node-b — node-a was the only rule's GW,
+	// so syncNodeId deallocates its ID and the node is placed in NodesDeleted
+	rule.GWNodeName = "node-b"
+	sc, err := s.UpdateEgressRule(rule)
+	if err != nil {
+		t.Fatalf("UpdateEgressRule (change GW): %v", err)
+	}
+
+	// Verify NodesDeleted contains node-a with its full state
+	deletedState, deleted := sc.NodesDeleted["node-a"]
+	if !deleted {
+		t.Fatal("Expected node-a in NodesDeleted")
+	}
+	if deletedState.Name != "node-a" {
+		t.Errorf("Expected deleted node name 'node-a', got %q", deletedState.Name)
+	}
+	if !deletedState.IPv4.Equal(net.ParseIP("192.168.1.1")) {
+		t.Errorf("Expected deleted node IPv4 192.168.1.1, got %v", deletedState.IPv4)
+	}
+	if !deletedState.IPv6.Equal(net.ParseIP("fd00::1")) {
+		t.Errorf("Expected deleted node IPv6 fd00::1, got %v", deletedState.IPv6)
+	}
+
+	// After removal, node-a should have its ID deallocated
+	nsA, _ = s.GetNodeState("node-a")
+	if nsA.IDAllocated {
+		t.Error("Expected node-a ID to be deallocated after GW change")
+	}
+	if nsA.FWMark != 0 {
+		t.Errorf("Expected FWMark 0, got %d", nsA.FWMark)
+	}
+	if nsA.RouteTableID != 0 {
+		t.Errorf("Expected RouteTableID 0, got %d", nsA.RouteTableID)
+	}
+
+	// The saved values should have been non-zero before removal
+	if savedFWMark == 0 {
+		t.Error("Expected non-zero FWMark before GW change")
+	}
+	if savedRouteTableID == 0 {
+		t.Error("Expected non-zero RouteTableID before GW change")
+	}
+}
+
+// --- Lines 224-229: DeleteEgressRule, GW node removed (if removed block) ---
+
+func TestDeleteEgressRule_RemovedNodeStateInNodesDeleted(t *testing.T) {
+	s := newTestState(t)
+
+	// Create rule pointing to gw-node
+	rule := EgressRule{
+		ID:         "rule1",
+		GWNodeName: "gw-node",
+		SrcIPv4s:   []net.IP{net.ParseIP("10.0.0.1")},
+		SNATIPv4:   net.ParseIP("1.2.3.4"),
+	}
+	if _, err := s.UpdateEgressRule(rule); err != nil {
+		t.Fatalf("UpdateEgressRule: %v", err)
+	}
+
+	// Register the node with full IP info — it gets an ID allocated since a rule references it
+	node := Node{Name: "gw-node", IPv4: net.ParseIP("192.168.1.1"), IPv6: net.ParseIP("fd00::1")}
+	if _, err := s.UpdateNode(node); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	// Verify the node has an allocated ID
+	ns, _ := s.GetNodeState("gw-node")
+	if !ns.IDAllocated {
+		t.Fatal("Expected gw-node to have ID allocated")
+	}
+
+	// Delete the rule — gw-node was the only rule referencing it,
+	// so syncNodeId deallocates its ID and the node is placed in NodesDeleted
+	sc, err := s.DeleteEgressRule("rule1")
+	if err != nil {
+		t.Fatalf("DeleteEgressRule: %v", err)
+	}
+
+	// Verify NodesDeleted contains gw-node with its full state
+	deletedState, deleted := sc.NodesDeleted["gw-node"]
+	if !deleted {
+		t.Fatal("Expected gw-node in NodesDeleted")
+	}
+	if deletedState.Name != "gw-node" {
+		t.Errorf("Expected deleted node name 'gw-node', got %q", deletedState.Name)
+	}
+	if !deletedState.IPv4.Equal(net.ParseIP("192.168.1.1")) {
+		t.Errorf("Expected deleted node IPv4 192.168.1.1, got %v", deletedState.IPv4)
+	}
+	if !deletedState.IPv6.Equal(net.ParseIP("fd00::1")) {
+		t.Errorf("Expected deleted node IPv6 fd00::1, got %v", deletedState.IPv6)
+	}
+
+	// After removal, gw-node should have its ID deallocated
+	ns, _ = s.GetNodeState("gw-node")
+	if ns.IDAllocated {
+		t.Error("Expected gw-node ID to be deallocated after rule deletion")
+	}
+	if ns.FWMark != 0 {
+		t.Errorf("Expected FWMark 0 after rule deletion, got %d", ns.FWMark)
+	}
+	if ns.RouteTableID != 0 {
+		t.Errorf("Expected RouteTableID 0 after rule deletion, got %d", ns.RouteTableID)
+	}
+}
+
+// --- Lines 288-290: UpdateNode ID allocator exhaustion ---
+
+func TestUpdateNode_IDAllocatorExhausted(t *testing.T) {
+	// FWMask 0xF00000: Size=16, allocator has 15 usable IDs
+	cfg := &Config{
+		NodeName:           "local-node",
+		FWMask:             utils.FWMask(0xF00000),
+		RouteTableIDOffset: 100000,
+	}
+	s, err := NewState(cfg, logr.Discard())
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	// Create 15 rules each pointing to a distinct non-local GW node
+	for i := 0; i < 15; i++ {
+		nodeName := fmt.Sprintf("node-%d", i)
+		rule := EgressRule{
+			ID:         fmt.Sprintf("rule-%d", i),
+			GWNodeName: nodeName,
+			SrcIPv4s:   []net.IP{net.ParseIP("10.0.0.1")},
+			SNATIPv4:   net.ParseIP("1.2.3.4"),
+		}
+		if _, err := s.UpdateEgressRule(rule); err != nil {
+			t.Fatalf("UpdateEgressRule %d: %v", i, err)
+		}
+	}
+
+	// Register all 15 nodes — each gets an ID allocated, exhausting the pool
+	for i := 0; i < 15; i++ {
+		node := Node{
+			Name: fmt.Sprintf("node-%d", i),
+			IPv4: net.ParseIP(fmt.Sprintf("192.168.1.%d", i+1)),
+		}
+		if _, err := s.UpdateNode(node); err != nil {
+			t.Fatalf("UpdateNode node-%d: %v", i, err)
+		}
+	}
+
+	// Pool is now exhausted — adding a new node should fail at allocation
+	newNode := Node{Name: "overflow-node", IPv4: net.ParseIP("192.168.2.1")}
+	_, err = s.UpdateNode(newNode)
+	if err == nil {
+		t.Fatal("Expected error due to ID allocator exhaustion")
+	}
+
+	// The node should NOT be stored since the error occurs before mutation
+	_, ok := s.GetNodeState("overflow-node")
+	if ok {
+		t.Error("Expected overflow-node to NOT be in state after allocation failure")
+	}
+}
