@@ -13,10 +13,10 @@ import (
 
 type nodeController struct {
 	client     client.Client
-	reconciler *Reconciler
+	reconciler Reconciler
 }
 
-func AttachNodeController(mgr ctrl.Manager, reconciler *Reconciler) error {
+func AttachNodeController(mgr ctrl.Manager, reconciler Reconciler) error {
 	c := &nodeController{
 		client:     mgr.GetClient(),
 		reconciler: reconciler,

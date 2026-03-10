@@ -13,7 +13,17 @@ import (
 	"github.com/go-logr/logr"
 )
 
-type Reconciler struct {
+type Reconciler interface {
+	Start(ctx context.Context) error
+	Purge() error
+	IsReady() bool
+	UpdateEgressRule(egressRule core.EgressRule) error
+	DeleteEgressRule(id string) error
+	UpdateNode(node core.Node) error
+	DeleteNode(nodeName string) error
+}
+
+type reconciler struct {
 	sync.RWMutex
 
 	state                  core.State
@@ -23,7 +33,7 @@ type Reconciler struct {
 	logger                 logr.Logger
 }
 
-func NewReconciler(config *core.Config, logger logr.Logger) (*Reconciler, error) {
+func NewReconciler(config *core.Config, logger logr.Logger) (*reconciler, error) {
 	state, err := core.NewState(config, logger)
 	if err != nil {
 		return nil, err
@@ -52,7 +62,7 @@ func NewReconciler(config *core.Config, logger logr.Logger) (*Reconciler, error)
 		return nil, fmt.Errorf("unsupported route backend: %q", config.RouteBackend)
 	}
 
-	return &Reconciler{
+	return &reconciler{
 		state:                  state,
 		reconciliationInterval: config.ReconciliationInterval,
 		managers:               managers,
@@ -60,7 +70,7 @@ func NewReconciler(config *core.Config, logger logr.Logger) (*Reconciler, error)
 	}, nil
 }
 
-func (r *Reconciler) Start(ctx context.Context) error {
+func (r *reconciler) Start(ctx context.Context) error {
 	r.Lock()
 
 	r.logger.Info("Starting egress reconciler")
@@ -127,7 +137,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 	}
 }
 
-func (r *Reconciler) Purge() error {
+func (r *reconciler) Purge() error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -152,14 +162,14 @@ func (r *Reconciler) Purge() error {
 	return errors.Join(errs...)
 }
 
-func (r *Reconciler) IsReady() bool {
+func (r *reconciler) IsReady() bool {
 	r.RLock()
 	defer r.RUnlock()
 
 	return r.isReady
 }
 
-func (r *Reconciler) UpdateEgressRule(egressRule core.EgressRule) error {
+func (r *reconciler) UpdateEgressRule(egressRule core.EgressRule) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -181,7 +191,7 @@ func (r *Reconciler) UpdateEgressRule(egressRule core.EgressRule) error {
 	return nil
 }
 
-func (r *Reconciler) DeleteEgressRule(id string) error {
+func (r *reconciler) DeleteEgressRule(id string) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -203,7 +213,7 @@ func (r *Reconciler) DeleteEgressRule(id string) error {
 	return nil
 }
 
-func (r *Reconciler) UpdateNode(node core.Node) error {
+func (r *reconciler) UpdateNode(node core.Node) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -225,7 +235,7 @@ func (r *Reconciler) UpdateNode(node core.Node) error {
 	return nil
 }
 
-func (r *Reconciler) DeleteNode(nodeName string) error {
+func (r *reconciler) DeleteNode(nodeName string) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -247,7 +257,7 @@ func (r *Reconciler) DeleteNode(nodeName string) error {
 	return nil
 }
 
-func (r *Reconciler) reconcile(changes core.StateChange) error {
+func (r *reconciler) reconcile(changes core.StateChange) error {
 	if !changes.IsEmpty() {
 		r.logger.V(2).Info("Reconciling state changes", "stateChange", changes)
 	}

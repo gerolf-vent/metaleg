@@ -23,13 +23,13 @@ const (
 
 type serviceController struct {
 	client        client.Client
-	reconciler    *Reconciler
+	reconciler    Reconciler
 	nodeName      string
 	mlbNamespace  string
 	filterForNode bool
 }
 
-func AttachServiceController(mgr ctrl.Manager, reconciler *Reconciler, config *Config) error {
+func AttachServiceController(mgr ctrl.Manager, reconciler Reconciler, config *Config) error {
 	c := &serviceController{
 		client:        mgr.GetClient(),
 		reconciler:    reconciler,
