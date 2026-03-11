@@ -26,13 +26,19 @@ jobs:
 
           VERSION_FULL="${GITHUB_REF_NAME#v}"
           EPOCH="0"
-          if [[ "$RAW_VERSION" =~ ^(.+)-r([0-9]+)$ ]]; then
+          if [[ "$VERSION_FULL" =~ ^(.+)-r([0-9]+)$ ]]; then
             VERSION_FULL="${BASH_REMATCH[1]}"
             EPOCH="${BASH_REMATCH[2]}"
           fi
+
+          if [[ ! "$VERSION_FULL" =~ ^([0-9]+\.[0-9]+\.[0-9]+)([.-].*)?$ ]]; then
+            echo "Unsupported tag format: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
           VERSION_3="${BASH_REMATCH[1]}"
-          VERSION_2="$VERSION_1.$(echo "$VERSION_3" | cut -d. -f2)"
           VERSION_1="$(echo "$VERSION_3" | cut -d. -f1)"
+          VERSION_2="$VERSION_1.$(echo "$VERSION_3" | cut -d. -f2)"
 
           VERSION="$VERSION_3" EPOCH="$EPOCH" ./build/yq eval -i '.package.version = strenv(VERSION) | .package.epoch = (strenv(EPOCH) | tonumber)' ./container-image/melange.yaml
 
