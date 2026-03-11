@@ -24,25 +24,23 @@ jobs:
           wget -qO ./build/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           chmod +x ./build/yq
 
-          RAW_VERSION="${GITHUB_REF_NAME#v}"
+          VERSION_FULL="${GITHUB_REF_NAME#v}"
           EPOCH="0"
           if [[ "$RAW_VERSION" =~ ^(.+)-r([0-9]+)$ ]]; then
-            RAW_VERSION="${BASH_REMATCH[1]}"
+            VERSION_FULL="${BASH_REMATCH[1]}"
             EPOCH="${BASH_REMATCH[2]}"
           fi
+          VERSION_3="${BASH_REMATCH[1]}"
+          VERSION_2="$VERSION_1.$(echo "$VERSION_3" | cut -d. -f2)"
+          VERSION_1="$(echo "$VERSION_3" | cut -d. -f1)"
 
-          VERSION="$RAW_VERSION"
-          VERSION_1="$(echo "$VERSION" | cut -d. -f1)"
-          VERSION_2="$VERSION_1.$(echo "$VERSION" | cut -d. -f2)"
-          VERSION_3="$VERSION_1.$VERSION_2.$(echo "$VERSION" | cut -d. -f3)"
+          VERSION="$VERSION_3" EPOCH="$EPOCH" ./build/yq eval -i '.package.version = strenv(VERSION) | .package.epoch = (strenv(EPOCH) | tonumber)' ./container-image/melange.yaml
 
-          VERSION="$VERSION" EPOCH="$EPOCH" ./build/yq eval -i '.package.version = strenv(VERSION) | .package.epoch = (strenv(EPOCH) | tonumber)' ./container-image/melange.yaml
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "version_1=$VERSION_1" >> $GITHUB_OUTPUT
-          echo "version_2=$VERSION_2" >> $GITHUB_OUTPUT
+          echo "version_full=${VERSION_FULL}-r${EPOCH}" >> $GITHUB_OUTPUT
+          echo "version=$VERSION_FULL" >> $GITHUB_OUTPUT
           echo "version_3=$VERSION_3" >> $GITHUB_OUTPUT
-          echo "version_full=${VERSION}-r${EPOCH}" >> $GITHUB_OUTPUT
+          echo "version_2=$VERSION_2" >> $GITHUB_OUTPUT
+          echo "version_1=$VERSION_1" >> $GITHUB_OUTPUT
       - uses: chainguard-dev/actions/melange-build@v1.4.3
         id: melange
         with:
