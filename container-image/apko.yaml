@@ -9,6 +9,7 @@ contents:
   - alpine-baselayout
   - alpine-release
   - iptables
+  - iptables-legacy
   - ipset
 
 entrypoint:

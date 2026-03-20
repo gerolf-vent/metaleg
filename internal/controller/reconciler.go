@@ -44,9 +44,15 @@ func NewReconciler(config *core.Config, logger logr.Logger) (*reconciler, error)
 	// Firewall backend
 	switch config.FWBackend {
 	case "iptables":
-		fwManager, err := iptables.NewManager(state, logger)
+		fwManager, err := iptables.NewManager(state, logger, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create iptables manager: %w", err)
+		}
+		managers = append(managers, fwManager)
+	case "iptables-legacy":
+		fwManager, err := iptables.NewManager(state, logger, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create iptables-legacy manager: %w", err)
 		}
 		managers = append(managers, fwManager)
 	default:

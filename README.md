@@ -37,6 +37,7 @@ The controller is configured via environment variables:
 | Name | Description |
 | ---- | ----------- |
 | `iptables` | Modern iptables backend that chooses `nf_tables` or legacy `ip_tables` under the hood automatically |
+| `iptables-legacy` | Legacy iptables backend |
 
 ### Route backends
 | Name | Description |

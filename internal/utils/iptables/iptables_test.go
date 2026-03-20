@@ -43,7 +43,7 @@ func TestCmdError_Error(t *testing.T) {
 }
 
 func TestNew_InvalidProto(t *testing.T) {
-	_, err := New(Protocol("invalid"))
+	_, err := New(Protocol("invalid"), false)
 	if err == nil {
 		t.Error("Expected error for invalid protocol")
 	}
@@ -52,7 +52,7 @@ func TestNew_InvalidProto(t *testing.T) {
 func TestNew(t *testing.T) {
 	for _, proto := range []Protocol{IPv4, IPv6} {
 		t.Run(proto.String(), func(t *testing.T) {
-			ipt, err := New(proto)
+			ipt, err := New(proto, false)
 			if err != nil {
 				t.Skipf("%s not found, skipping integration test", proto)
 			}
@@ -67,7 +67,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestIsIPv6(t *testing.T) {
-	ipt, err := New(IPv6)
+	ipt, err := New(IPv6, false)
 	if err != nil {
 		t.Skip("ip6tables not found, skipping integration test")
 	}
@@ -78,7 +78,7 @@ func TestIsIPv6(t *testing.T) {
 }
 
 func TestChainLifecycle(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -118,7 +118,7 @@ func TestChainLifecycle(t *testing.T) {
 }
 
 func TestRuleLifecycle(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -158,7 +158,7 @@ func TestRuleLifecycle(t *testing.T) {
 }
 
 func TestListRules(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -216,7 +216,7 @@ func TestNew_ExecutableNotFound(t *testing.T) {
 	// Set PATH to empty to simulate executable not found
 	os.Setenv("PATH", "")
 
-	_, err := New(IPv4)
+	_, err := New(IPv4, false)
 	if err == nil {
 		t.Error("Expected error when iptables executable not found")
 	}
@@ -224,7 +224,7 @@ func TestNew_ExecutableNotFound(t *testing.T) {
 		t.Errorf("Expected error message about iptables executable not found, got: %v", err)
 	}
 
-	_, err = New(IPv6)
+	_, err = New(IPv6, false)
 	if err == nil {
 		t.Error("Expected error when ip6tables executable not found")
 	}
@@ -234,7 +234,7 @@ func TestNew_ExecutableNotFound(t *testing.T) {
 }
 
 func TestEnsureChain_ChainAlreadyExists(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -270,7 +270,7 @@ func TestEnsureChain_ChainAlreadyExists(t *testing.T) {
 }
 
 func TestDeleteChain_ChainDoesNotExist(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -432,7 +432,7 @@ func TestIPTablesSpecParser_Parse_NoMatchingArg(t *testing.T) {
 
 // Test additional error scenarios for main iptables functionality
 func TestEnsureRule_DeleteRule_NonExistent(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -459,7 +459,7 @@ func TestEnsureRule_DeleteRule_NonExistent(t *testing.T) {
 }
 
 func TestEnsureRule_RuleAlreadyExists(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}
@@ -497,7 +497,7 @@ func TestEnsureRule_RuleAlreadyExists(t *testing.T) {
 }
 
 func TestListRules_EmptyChain(t *testing.T) {
-	ipt, err := New(IPv4)
+	ipt, err := New(IPv4, false)
 	if err != nil {
 		t.Skip("iptables not found, skipping integration test")
 	}

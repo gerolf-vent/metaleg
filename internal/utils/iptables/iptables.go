@@ -103,18 +103,26 @@ type ipTables struct {
 	proto Protocol
 }
 
-func New(proto Protocol) (IPTables, error) {
+func New(proto Protocol, legacy bool) (IPTables, error) {
 	var path string
 	var err error
 
 	switch proto {
 	case IPv4:
-		path, err = exec.LookPath("iptables")
+		binName := "iptables"
+		if legacy {
+			binName = "iptables-legacy"
+		}
+		path, err = exec.LookPath(binName)
 		if err != nil {
 			return nil, fmt.Errorf("iptables executable not found: %w", err)
 		}
 	case IPv6:
-		path, err = exec.LookPath("ip6tables")
+		binName := "ip6tables"
+		if legacy {
+			binName = "ip6tables-legacy"
+		}
+		path, err = exec.LookPath(binName)
 		if err != nil {
 			return nil, fmt.Errorf("ip6tables executable not found: %w", err)
 		}

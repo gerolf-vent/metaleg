@@ -35,7 +35,7 @@ type Manager struct {
 	ips             ipset.IPSet       // IPSet interface
 }
 
-func NewManager(state core.State, logger logr.Logger) (*Manager, error) {
+func NewManager(state core.State, logger logr.Logger, legacy bool) (*Manager, error) {
 	var err error
 
 	m := &Manager{
@@ -46,12 +46,12 @@ func NewManager(state core.State, logger logr.Logger) (*Manager, error) {
 		excludeDstCIDRs: state.ExcludeDstCIDRs(),
 	}
 
-	m.ipt4, err = iptables.New(iptables.IPv4)
+	m.ipt4, err = iptables.New(iptables.IPv4, legacy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPv4 iptables interface: %w", err)
 	}
 
-	m.ipt6, err = iptables.New(iptables.IPv6)
+	m.ipt6, err = iptables.New(iptables.IPv6, legacy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPv6 iptables interface: %w", err)
 	}
