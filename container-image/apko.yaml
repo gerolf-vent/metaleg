@@ -2,7 +2,7 @@ contents:
   keyring:
   - ./build/melange.rsa.pub
   repositories:
-  - https://dl-cdn.alpinelinux.org/alpine/edge/main
+  - https://dl-cdn.alpinelinux.org/alpine/v3.19/main
   - '@build ./build/packages'
   packages:
   - metaleg-agent@build
