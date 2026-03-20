@@ -98,5 +98,13 @@ spec:
           value: ":21793"
         - name: HEALTH_PROBE_BIND_ADDRESS
           value: ":21794"
+        volumeMounts:
+        - name: xtables-lock
+          mountPath: /run/xtables.lock
       terminationGracePeriodSeconds: 30
       priorityClassName: system-node-critical
+    volumes:
+    - name: xtables-lock
+      hostPath:
+        path: /run/xtables.lock
+        type: File
