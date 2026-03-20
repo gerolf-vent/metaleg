@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     go \
     ipset \
     iptables \
+    iptables-legacy \
     iproute2
 
 CMD ["/bin/sh", "-c", "sleep infinity"]

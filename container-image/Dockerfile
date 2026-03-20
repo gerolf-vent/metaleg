@@ -25,6 +25,7 @@ FROM alpine:edge
 # Install runtime dependencies
 RUN apk add --no-cache \
     iptables \
+    iptables-legacy \
     ipset \
     ca-certificates
 
