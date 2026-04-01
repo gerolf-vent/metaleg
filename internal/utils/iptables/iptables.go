@@ -304,7 +304,7 @@ func (ipt *ipTables) check(table Table, chain Chain, rulespec ...string) (bool, 
 
 	err := ipt.run(args)
 	var exitErr *CmdError
-	if err != nil && strings.Contains(err.Error(), "Bad rule") {
+	if err != nil && (strings.Contains(err.Error(), "Bad rule") || strings.Contains(err.Error(), "No chain/target/match by that name")) {
 		return false, nil
 	} else if errors.As(err, &exitErr) {
 		if exitErr.ExitCode() == 2 { // Exit code 2 indicates that a dependency does not exist
