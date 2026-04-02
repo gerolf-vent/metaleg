@@ -188,6 +188,127 @@ func TestListRules(t *testing.T) {
 	_, _ = ipt.DeleteChain(table, chain)
 }
 
+func TestEnsureRule_InsertAtOrdering(t *testing.T) {
+	ipt, err := New(IPv4, false)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_INSERTAT")
+	_, _ = ipt.DeleteChain(table, chain)
+	_, _ = ipt.EnsureChain(table, chain)
+
+	rule1 := []string{"-m", "comment", "--comment", "rule-1", "-j", "ACCEPT"}
+	rule2 := []string{"-m", "comment", "--comment", "rule-2", "-j", "ACCEPT"}
+	rule3 := []string{"-m", "comment", "--comment", "rule-3", "-j", "ACCEPT"}
+	rule4 := []string{"-m", "comment", "--comment", "rule-4", "-j", "ACCEPT"}
+	rule5 := []string{"-m", "comment", "--comment", "rule-5", "-j", "ACCEPT"}
+
+	_, _ = ipt.DeleteRule(table, chain, rule1...)
+	_, _ = ipt.DeleteRule(table, chain, rule2...)
+	_, _ = ipt.DeleteRule(table, chain, rule3...)
+	_, _ = ipt.DeleteRule(table, chain, rule4...)
+	_, _ = ipt.DeleteRule(table, chain, rule5...)
+
+	if _, err := ipt.EnsureRule(Append, table, chain, rule1...); err != nil {
+		t.Fatalf("failed to append rule1: %v", err)
+	}
+	if _, err := ipt.EnsureRule(Append, table, chain, rule3...); err != nil {
+		t.Fatalf("failed to append rule3: %v", err)
+	}
+	if _, err := ipt.EnsureRule(Append, table, chain, rule5...); err != nil {
+		t.Fatalf("failed to append rule5: %v", err)
+	}
+	if _, err := ipt.EnsureRule(InsertAt(2), table, chain, rule2...); err != nil {
+		t.Fatalf("failed to insert rule2 at index 2: %v", err)
+	}
+	if _, err := ipt.EnsureRule(InsertAt(4), table, chain, rule4...); err != nil {
+		t.Fatalf("failed to insert rule4 at index 4: %v", err)
+	}
+
+	rules, err := ipt.ListRules(table, chain)
+	if err != nil {
+		t.Fatalf("ListRules failed: %v", err)
+	}
+
+	if len(rules) != 5 {
+		t.Fatalf("expected 5 rules, got %d", len(rules))
+	}
+	if !reflect.DeepEqual(rules[0][2:], rule1) {
+		t.Errorf("expected first rule to be rule1, got %v", rules[0][2:])
+	}
+	if !reflect.DeepEqual(rules[1][2:], rule2) {
+		t.Errorf("expected second rule to be rule2, got %v", rules[1][2:])
+	}
+	if !reflect.DeepEqual(rules[2][2:], rule3) {
+		t.Errorf("expected third rule to be rule3, got %v", rules[2][2:])
+	}
+	if !reflect.DeepEqual(rules[3][2:], rule4) {
+		t.Errorf("expected fourth rule to be rule4, got %v", rules[3][2:])
+	}
+	if !reflect.DeepEqual(rules[4][2:], rule5) {
+		t.Errorf("expected fifth rule to be rule5, got %v", rules[4][2:])
+	}
+
+	_, _ = ipt.DeleteRule(table, chain, rule1...)
+	_, _ = ipt.DeleteRule(table, chain, rule2...)
+	_, _ = ipt.DeleteRule(table, chain, rule3...)
+	_, _ = ipt.DeleteRule(table, chain, rule4...)
+	_, _ = ipt.DeleteRule(table, chain, rule5...)
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
+func TestEnsureRule_InsertAtInvalidPositions(t *testing.T) {
+	ipt, err := New(IPv4, false)
+	if err != nil {
+		t.Skip("iptables not found, skipping integration test")
+	}
+
+	requireIPTablePrivileges(t, ipt)
+
+	table := TableFilter
+	chain := Chain("TESTCHAIN_INSERTAT_INVALID")
+	_, _ = ipt.DeleteChain(table, chain)
+	_, _ = ipt.EnsureChain(table, chain)
+
+	rule0 := []string{"-m", "comment", "--comment", "invalid-insert-0", "-j", "ACCEPT"}
+	ruleNeg := []string{"-m", "comment", "--comment", "invalid-insert-neg", "-j", "ACCEPT"}
+
+	_, _ = ipt.DeleteRule(table, chain, rule0...)
+	_, _ = ipt.DeleteRule(table, chain, ruleNeg...)
+
+	if _, err := ipt.EnsureRule(InsertAt(0), table, chain, rule0...); err == nil {
+		t.Fatal("expected EnsureRule with InsertAt(0) to fail")
+	}
+
+	if _, err := ipt.EnsureRule(InsertAt(-1), table, chain, ruleNeg...); err == nil {
+		t.Fatal("expected EnsureRule with InsertAt(-1) to fail")
+	}
+
+	exists0, err := ipt.RuleExists(table, chain, rule0...)
+	if err != nil {
+		t.Fatalf("RuleExists failed for InsertAt(0) rule: %v", err)
+	}
+	if exists0 {
+		t.Error("did not expect rule from InsertAt(0) to exist")
+	}
+
+	existsNeg, err := ipt.RuleExists(table, chain, ruleNeg...)
+	if err != nil {
+		t.Fatalf("RuleExists failed for InsertAt(-1) rule: %v", err)
+	}
+	if existsNeg {
+		t.Error("did not expect rule from InsertAt(-1) to exist")
+	}
+
+	_, _ = ipt.DeleteRule(table, chain, rule0...)
+	_, _ = ipt.DeleteRule(table, chain, ruleNeg...)
+	_, _ = ipt.DeleteChain(table, chain)
+}
+
 func TestTableString(t *testing.T) {
 	if TableNAT != "nat" || TableFilter != "filter" || TableMangle != "mangle" {
 		t.Error("Table string values incorrect")
@@ -197,12 +318,6 @@ func TestTableString(t *testing.T) {
 func TestChainString(t *testing.T) {
 	if ChainPostrouting != "POSTROUTING" || ChainPrerouting != "PREROUTING" || ChainOutput != "OUTPUT" || ChainInput != "INPUT" || ChainForward != "FORWARD" {
 		t.Error("Chain string values incorrect")
-	}
-}
-
-func TestRulePositionString(t *testing.T) {
-	if Prepend != "-I" || Append != "-A" {
-		t.Error("RulePosition string values incorrect")
 	}
 }
 
@@ -538,8 +653,9 @@ func TestConstants(t *testing.T) {
 		{"ChainOutput", ChainOutput, Chain("OUTPUT")},
 		{"ChainInput", ChainInput, Chain("INPUT")},
 		{"ChainForward", ChainForward, Chain("FORWARD")},
-		{"Prepend", Prepend, RulePosition("-I")},
-		{"Append", Append, RulePosition("-A")},
+		{"Prepend", Prepend, RulePosition([]string{"-I"})},
+		{"Append", Append, RulePosition([]string{"-A"})},
+		{"InsertAt(1)", InsertAt(1), RulePosition([]string{"-I", "1"})},
 		{"IPv4", IPv4, Protocol("IPv4")},
 		{"IPv6", IPv6, Protocol("IPv6")},
 		{"TCP", TCP, TransportProtocol("tcp")},
@@ -548,8 +664,30 @@ func TestConstants(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.actual != test.expected {
+			if !reflect.DeepEqual(test.expected, test.actual) {
 				t.Errorf("Expected %s to be %v, got %v", test.name, test.expected, test.actual)
+			}
+		})
+	}
+}
+
+func TestInsertAt(t *testing.T) {
+	tests := []struct {
+		name     string
+		index    int
+		expected RulePosition
+	}{
+		{name: "first", index: 1, expected: RulePosition([]string{"-I", "1"})},
+		{name: "middle", index: 7, expected: RulePosition([]string{"-I", "7"})},
+		{name: "zero", index: 0, expected: RulePosition([]string{"-I", "0"})},
+		{name: "negative", index: -3, expected: RulePosition([]string{"-I", "-3"})},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := InsertAt(tt.index)
+			if !reflect.DeepEqual(tt.expected, actual) {
+				t.Errorf("InsertAt(%d): expected %v, got %v", tt.index, tt.expected, actual)
 			}
 		})
 	}

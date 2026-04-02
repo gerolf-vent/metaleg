@@ -65,12 +65,16 @@ const (
 	ChainForward     Chain = "FORWARD"
 )
 
-type RulePosition string
+type RulePosition []string
 
-const (
-	Prepend RulePosition = "-I"
-	Append  RulePosition = "-A"
+var (
+	Prepend RulePosition = []string{"-I"}
+	Append  RulePosition = []string{"-A"}
 )
+
+func InsertAt(index int) RulePosition {
+	return []string{"-I", fmt.Sprintf("%d", index)}
+}
 
 type CmdError struct {
 	*exec.ExitError
@@ -268,7 +272,11 @@ func (ipt *ipTables) EnsureRule(position RulePosition, table Table, chain Chain,
 	}
 
 	if !exists {
-		createArgs := append([]string{"-t", string(table), string(position), string(chain)}, rulespec...)
+		createArgs := []string{"-t", string(table)}
+		createArgs = append(createArgs, position[0])
+		createArgs = append(createArgs, string(chain))
+		createArgs = append(createArgs, position[1:]...)
+		createArgs = append(createArgs, rulespec...)
 		err = ipt.run(createArgs)
 		if err != nil {
 			return false, err

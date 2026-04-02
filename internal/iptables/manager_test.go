@@ -16,6 +16,11 @@ func ruleSpecToString(spec []string) string {
 	return strings.Join(spec, " ")
 }
 
+func isSNATSkipRuleWithMask(spec []string, mask uint32) bool {
+	rule, ok := ParseSNATSkipRule(spec)
+	return ok && rule.FWMask == mask
+}
+
 // --- Test helpers ---
 
 func newTestManager(state *mock.State) *Manager {
@@ -161,6 +166,119 @@ func TestSetup_JumpRules(t *testing.T) {
 	}
 	if !found {
 		t.Error("Expected POSTROUTING -> METALEG-SNAT jump rule")
+	}
+}
+
+func TestSetup_BuiltInChainRulePositions(t *testing.T) {
+	m := newTestManager(mock.NewState())
+	ipt4 := getIPT4(m)
+
+	// Simulate pre-existing network plugin rules (Calico/kube-router style) in built-in chains.
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableMangle, iptables.ChainPrerouting, "-m", "comment", "--comment", "cali: accepted established", "-j", "ACCEPT")
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableMangle, iptables.ChainPrerouting, "-j", "cali-PREROUTING")
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableMangle, iptables.ChainPrerouting, "-j", "KUBE-ROUTER-PREROUTING")
+
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableFilter, iptables.ChainForward, "-j", "KUBE-ROUTER-FORWARD")
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableFilter, iptables.ChainForward, "-j", "cali-FORWARD")
+
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableNAT, iptables.ChainPostrouting, "-j", "cali-POSTROUTING")
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableNAT, iptables.ChainPostrouting, "-j", "KUBE-ROUTER-POSTROUTING")
+
+	if err := m.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	manglePrerouting := ipt4.GetRules(iptables.TableMangle, iptables.ChainPrerouting)
+	if len(manglePrerouting) < 4 {
+		t.Fatalf("Expected at least 4 rules in mangle PREROUTING, got %d", len(manglePrerouting))
+	}
+	if got := ruleSpecToString(manglePrerouting[0]); got != "-j "+iptablesRTMarkChainName {
+		t.Errorf("Expected first mangle PREROUTING rule to be jump to %s, got %q", iptablesRTMarkChainName, got)
+	}
+	if !isSNATSkipRuleWithMask(manglePrerouting[1], uint32(m.fwMask)) {
+		t.Errorf("Expected second mangle PREROUTING rule to be SNAT-skip with mask %#x, got %q", uint32(m.fwMask), ruleSpecToString(manglePrerouting[1]))
+	}
+	if got := ruleSpecToString(manglePrerouting[2]); got != "-j cali-PREROUTING" {
+		t.Errorf("Expected third mangle PREROUTING rule to remain cali-PREROUTING, got %q", got)
+	}
+	if got := ruleSpecToString(manglePrerouting[3]); got != "-j KUBE-ROUTER-PREROUTING" {
+		t.Errorf("Expected fourth mangle PREROUTING rule to remain KUBE-ROUTER-PREROUTING, got %q", got)
+	}
+
+	filterForward := ipt4.GetRules(iptables.TableFilter, iptables.ChainForward)
+	if len(filterForward) < 4 {
+		t.Fatalf("Expected at least 4 rules in filter FORWARD, got %d", len(filterForward))
+	}
+	if !isSNATSkipRuleWithMask(filterForward[0], uint32(m.fwMask)) {
+		t.Errorf("Expected first filter FORWARD rule to be SNAT-skip with mask %#x, got %q", uint32(m.fwMask), ruleSpecToString(filterForward[0]))
+	}
+	if got := ruleSpecToString(filterForward[1]); got != "-j "+iptablesRejectChainName {
+		t.Errorf("Expected second filter FORWARD rule to be jump to %s, got %q", iptablesRejectChainName, got)
+	}
+	if got := ruleSpecToString(filterForward[2]); got != "-j KUBE-ROUTER-FORWARD" {
+		t.Errorf("Expected third filter FORWARD rule to remain KUBE-ROUTER-FORWARD, got %q", got)
+	}
+	if got := ruleSpecToString(filterForward[3]); got != "-j cali-FORWARD" {
+		t.Errorf("Expected fourth filter FORWARD rule to remain cali-FORWARD, got %q", got)
+	}
+
+	natPostrouting := ipt4.GetRules(iptables.TableNAT, iptables.ChainPostrouting)
+	if len(natPostrouting) < 4 {
+		t.Fatalf("Expected at least 4 rules in nat POSTROUTING, got %d", len(natPostrouting))
+	}
+	if !isSNATSkipRuleWithMask(natPostrouting[0], uint32(m.fwMask)) {
+		t.Errorf("Expected first nat POSTROUTING rule to be SNAT-skip with mask %#x, got %q", uint32(m.fwMask), ruleSpecToString(natPostrouting[0]))
+	}
+	if got := ruleSpecToString(natPostrouting[1]); got != "-j "+iptablesSNATChainName {
+		t.Errorf("Expected second nat POSTROUTING rule to be jump to %s, got %q", iptablesSNATChainName, got)
+	}
+	if got := ruleSpecToString(natPostrouting[2]); got != "-j cali-POSTROUTING" {
+		t.Errorf("Expected third nat POSTROUTING rule to remain cali-POSTROUTING, got %q", got)
+	}
+	if got := ruleSpecToString(natPostrouting[3]); got != "-j KUBE-ROUTER-POSTROUTING" {
+		t.Errorf("Expected fourth nat POSTROUTING rule to remain KUBE-ROUTER-POSTROUTING, got %q", got)
+	}
+}
+
+func TestSetup_CustomChainExcludeRulePosition(t *testing.T) {
+	m := newTestManager(mock.NewState())
+	ipt4 := getIPT4(m)
+
+	_, _ = ipt4.EnsureChain(iptables.TableMangle, iptablesRTMarkChainName)
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableMangle, iptablesRTMarkChainName, "-j", "EXISTING-MANGLE")
+
+	_, _ = ipt4.EnsureChain(iptables.TableFilter, iptablesRejectChainName)
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableFilter, iptablesRejectChainName, "-j", "EXISTING-FILTER")
+
+	_, _ = ipt4.EnsureChain(iptables.TableNAT, iptablesSNATChainName)
+	_, _ = ipt4.EnsureRule(iptables.Append, iptables.TableNAT, iptablesSNATChainName, "-j", "EXISTING-NAT")
+
+	if err := m.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	mangleRules := ipt4.GetRules(iptables.TableMangle, iptablesRTMarkChainName)
+	if len(mangleRules) == 0 {
+		t.Fatal("Expected mangle chain to contain rules after setup")
+	}
+	if !strings.Contains(ruleSpecToString(mangleRules[0]), ipsetExcludeDstPrefix) {
+		t.Errorf("Expected first mangle chain rule to be exclude-dst, got %q", ruleSpecToString(mangleRules[0]))
+	}
+
+	filterRules := ipt4.GetRules(iptables.TableFilter, iptablesRejectChainName)
+	if len(filterRules) == 0 {
+		t.Fatal("Expected filter chain to contain rules after setup")
+	}
+	if !strings.Contains(ruleSpecToString(filterRules[0]), ipsetExcludeDstPrefix) {
+		t.Errorf("Expected first filter chain rule to be exclude-dst, got %q", ruleSpecToString(filterRules[0]))
+	}
+
+	natRules := ipt4.GetRules(iptables.TableNAT, iptablesSNATChainName)
+	if len(natRules) == 0 {
+		t.Fatal("Expected nat chain to contain rules after setup")
+	}
+	if !strings.Contains(ruleSpecToString(natRules[0]), ipsetExcludeDstPrefix) {
+		t.Errorf("Expected first nat chain rule to be exclude-dst, got %q", ruleSpecToString(natRules[0]))
 	}
 }
 

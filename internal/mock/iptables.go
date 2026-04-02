@@ -3,6 +3,7 @@ package mock
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gerolf-vent/metaleg/internal/utils/iptables"
@@ -116,8 +117,26 @@ func (m *IPTables) EnsureRule(position iptables.RulePosition, table iptables.Tab
 	spec := make([]string, len(rulespec))
 	copy(spec, rulespec)
 
-	if position == iptables.Prepend {
-		m.Rules[k] = append([][]string{spec}, m.Rules[k]...)
+	if len(position) > 0 && position[0] == "-I" {
+		insertIndex := 0
+		if len(position) > 1 {
+			parsedIndex, err := strconv.Atoi(position[1])
+			if err == nil {
+				insertIndex = parsedIndex - 1 // iptables uses 1-based insertion indexes
+			}
+		}
+
+		if insertIndex < 0 {
+			insertIndex = 0
+		}
+		if insertIndex > len(m.Rules[k]) {
+			insertIndex = len(m.Rules[k])
+		}
+
+		rules := append(m.Rules[k], nil)
+		copy(rules[insertIndex+1:], rules[insertIndex:])
+		rules[insertIndex] = spec
+		m.Rules[k] = rules
 	} else {
 		m.Rules[k] = append(m.Rules[k], spec)
 	}

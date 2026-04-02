@@ -156,6 +156,14 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to ensure %s mangle PREROUTING rule: %w", ipt.Protocol(), err)
 		}
 
+		if err := m.ensureSNATSKipRule(ipt, iptables.TableMangle, iptables.ChainPrerouting, 2); err != nil {
+			return err
+		}
+
+		if err := m.ensureSNATSKipRule(ipt, iptables.TableMangle, iptables.ChainPostrouting, 1); err != nil {
+			return err
+		}
+
 		//
 		// Setup filter chain
 		//
@@ -170,6 +178,10 @@ func (m *Manager) Setup() error {
 
 		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableFilter, iptables.ChainForward, "-j", iptablesRejectChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s filter FORWARD rule: %w", ipt.Protocol(), err)
+		}
+
+		if err := m.ensureSNATSKipRule(ipt, iptables.TableFilter, iptables.ChainForward, 1); err != nil {
+			return err
 		}
 
 		//
@@ -188,34 +200,8 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to ensure %s NAT POSTROUTING rule: %w", ipt.Protocol(), err)
 		}
 
-		snatSkipRule := &SNATSkipRule{
-			FWMask: uint32(m.fwMask),
-		}
-
-		postroutingRules, err := ipt.ListRules(iptables.TableNAT, iptables.ChainPostrouting)
-		if err != nil {
-			return fmt.Errorf("failed to list %s NAT POSTROUTING rules: %w", ipt.Protocol(), err)
-		}
-
-		// If the first rule in the postrouting chain is not our SNAT-skip rule,
-		// then cleanup any existing SNAT-skip rules, so we can insert it as the first rule.
-		if len(postroutingRules) > 0 {
-			parsedSNATSkipRule, ok := ParseSNATSkipRule(postroutingRules[0][2:])
-			if !ok || parsedSNATSkipRule.FWMask != snatSkipRule.FWMask {
-				for _, rule := range postroutingRules {
-					parsedSkipRule, ok := ParseSNATSkipRule(rule[2:])
-					if ok {
-						m.logger.V(3).Info("Deleting conflicting SNAT-skip rule", "protocol", ipt.Protocol(), "mask", parsedSkipRule.FWMask)
-						if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, rule[2:]...); err != nil {
-							return fmt.Errorf("failed to delete conflicting %s NAT SNAP-skip rule: %w", ipt.Protocol(), err)
-						}
-					}
-				}
-			}
-		}
-
-		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptables.ChainPostrouting, snatSkipRule.Spec()...); err != nil {
-			return fmt.Errorf("failed to ensure %s NAT SNAT-skip rule: %w", ipt.Protocol(), err)
+		if err := m.ensureSNATSKipRule(ipt, iptables.TableNAT, iptables.ChainPostrouting, 1); err != nil {
+			return err
 		}
 	}
 
@@ -428,6 +414,44 @@ func (m *Manager) Cleanup() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func (m *Manager) ensureSNATSKipRule(ipt iptables.IPTables, table iptables.Table, chain iptables.Chain, index int) error {
+	if index < 1 {
+		panic(fmt.Sprintf("invalid SNAT-skip rule index %d, must be >= 1", index))
+	}
+
+	snatSkipRule := &SNATSkipRule{
+		FWMask: uint32(m.fwMask),
+	}
+
+	rules, err := ipt.ListRules(table, chain)
+	if err != nil {
+		return fmt.Errorf("failed to list %s %s %s rules: %w", ipt.Protocol(), strings.ToUpper(string(table)), strings.ToUpper(string(chain)), err)
+	}
+
+	// Check if the our SNAT-skip rule is at desired index in the chain, otherwise cleanup existing duplicates,
+	// so we can create a new one at the index.
+	if len(rules) > index-1 {
+		parsedSNATSkipRule, ok := ParseSNATSkipRule(rules[index-1][2:])
+		if !ok || parsedSNATSkipRule.FWMask != snatSkipRule.FWMask {
+			for _, rule := range rules {
+				parsedSkipRule, ok := ParseSNATSkipRule(rule[2:])
+				if ok {
+					m.logger.V(3).Info("Deleting conflicting SNAT-skip rule", "protocol", ipt.Protocol(), "table", table, "chain", chain, "mask", parsedSkipRule.FWMask)
+					if _, err := ipt.DeleteRule(table, chain, rule[2:]...); err != nil {
+						return fmt.Errorf("failed to delete conflicting %s %s %s rule: %w", ipt.Protocol(), strings.ToUpper(string(table)), strings.ToUpper(string(chain)), err)
+					}
+				}
+			}
+		}
+	}
+
+	if _, err := ipt.EnsureRule(iptables.InsertAt(index), table, chain, snatSkipRule.Spec()...); err != nil {
+		return fmt.Errorf("failed to ensure %s %s %s rule: %w", ipt.Protocol(), strings.ToUpper(string(table)), strings.ToUpper(string(chain)), err)
+	}
+
+	return nil
 }
 
 func (m *Manager) ensureIPSet(setName string, protocol ipset.Protocol, ips []net.IP) error {
