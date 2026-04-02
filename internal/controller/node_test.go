@@ -27,7 +27,7 @@ func startNodeController(t *testing.T, reconciler *mock.Reconciler) client.Clien
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 
-	if err := AttachNodeController(mgr, reconciler); err != nil {
+	if err := AttachNodeController(mgr, reconciler, NodeAddressTypeInternal); err != nil {
 		t.Fatalf("Failed to attach node controller: %v", err)
 	}
 

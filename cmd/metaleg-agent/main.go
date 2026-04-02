@@ -123,7 +123,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := controller.AttachNodeController(mgr, reconciler); err != nil {
+	if err := controller.AttachNodeController(mgr, reconciler, ctrlConfig.NodeAddressType); err != nil {
 		logger.Error(err, "Failed to attach node controller")
 		os.Exit(1)
 	}

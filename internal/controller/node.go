@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net"
+	"slices"
 
 	"github.com/gerolf-vent/metaleg/internal/core"
 	corev1 "k8s.io/api/core/v1"
@@ -12,14 +13,16 @@ import (
 )
 
 type nodeController struct {
-	client     client.Client
-	reconciler Reconciler
+	client       client.Client
+	reconciler   Reconciler
+	nodeAddrType NodeAddressType
 }
 
-func AttachNodeController(mgr ctrl.Manager, reconciler Reconciler) error {
+func AttachNodeController(mgr ctrl.Manager, reconciler Reconciler, nodeAddrType NodeAddressType) error {
 	c := &nodeController{
-		client:     mgr.GetClient(),
-		reconciler: reconciler,
+		client:       mgr.GetClient(),
+		reconciler:   reconciler,
+		nodeAddrType: nodeAddrType,
 	}
 
 	if err := ctrl.NewControllerManagedBy(mgr).
@@ -51,18 +54,32 @@ func (c *nodeController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	// Determine the desired NodeAddressType based on the configuration
+	var desiredAddrTypes []corev1.NodeAddressType
+	switch c.nodeAddrType {
+	case NodeAddressTypeInternal:
+		desiredAddrTypes = append(desiredAddrTypes, corev1.NodeInternalIP)
+	case NodeAddressTypeExternal:
+		desiredAddrTypes = append(desiredAddrTypes, corev1.NodeExternalIP)
+	case NodeAddressTypeAny:
+		desiredAddrTypes = append(desiredAddrTypes, corev1.NodeInternalIP, corev1.NodeExternalIP)
+	}
+
 	// Determine the Node's IP addresses
 	var nodeIPv4, nodeIPv6 net.IP
+	var nodeIPv4AddrType, nodeIPv6AddrType corev1.NodeAddressType
 	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
+		if slices.Contains(desiredAddrTypes, addr.Type) {
 			if ip := net.ParseIP(addr.Address); ip != nil {
 				if ip.To4() != nil {
-					if nodeIPv4 == nil {
+					if nodeIPv4 == nil || nodeIPv4AddrType != corev1.NodeInternalIP {
 						nodeIPv4 = ip
+						nodeIPv4AddrType = addr.Type
 					}
 				} else {
-					if nodeIPv6 == nil {
+					if nodeIPv6 == nil || nodeIPv6AddrType != corev1.NodeInternalIP {
 						nodeIPv6 = ip
+						nodeIPv6AddrType = addr.Type
 					}
 				}
 			}

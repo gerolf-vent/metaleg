@@ -21,6 +21,7 @@ The controller is configured via environment variables:
 | NODE_NAME | - | Hostname of the K8s node the agent is running on |
 | METALLB_NAMESPACE | `metallb-system` | Namespace where MetalLB is running in |
 | FILTER_ENDPOINTS_FOR_NODE | `true` | Whether to only redirect traffic from pod ips on the same node or all pod ips. |
+| NODE_IP_TYPE | `internal` | Whether to use only `internal`, `external` or `any` node ips for traffic redirection. If you specify `any`, internal node ips are preferred to external ones, but both are considered. |
 | FIREWALL_BACKEND | `iptables` | Firewall backend to use for SNAT rules and marking packages |
 | FIREWALL_MASK | `0x00F00000` | Firewall mask to use for marking packages (must be continous) |
 | FIREWALL_EXCLUDE_DST_CIDRS | `10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10` | Comma separated list of CIDRs to exclude from rerouting and masquerading (e.g. cluster pod/service CIDRs) |
