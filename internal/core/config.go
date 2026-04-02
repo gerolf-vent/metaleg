@@ -58,7 +58,7 @@ type Config struct {
 	NodeName string `env:"NODE_NAME"`
 
 	FWBackend         string       `env:"FIREWALL_BACKEND,default=iptables"`
-	FWMask            utils.FWMask `env:"FIREWALL_MASK,default=0xF00000"`
+	FWMask            utils.FWMask `env:"FIREWALL_MASK,default=0xF000"`
 	FWExcludeDstCIDRs CIDRList     `env:"FIREWALL_EXCLUDE_DST_CIDRS"`
 
 	RouteBackend       string `env:"ROUTE_BACKEND,default=netlink"`

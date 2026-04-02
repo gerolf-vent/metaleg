@@ -85,7 +85,7 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: FIREWALL_MASK
-          value: "0x00F00000"
+          value: "0xF000"
         - name: ROUTE_TABLE_ID_OFFSET
           value: "100000"
         - name: FIREWALL_BACKEND
