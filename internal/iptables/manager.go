@@ -138,7 +138,21 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to ensure %s exclude dst rule in mangle chain: %w", ipt.Protocol(), err)
 		}
 
-		if _, err := ipt.EnsureRule(iptables.Append, iptables.TableMangle, iptables.ChainPrerouting, "-j", iptablesRTMarkChainName); err != nil {
+		rules, err := ipt.ListRules(iptables.TableMangle, iptables.ChainPrerouting)
+		if err != nil {
+			return fmt.Errorf("failed to list %s mangle PREROUTING rules: %w", ipt.Protocol(), err)
+		}
+
+		// Ensure that the jump to our mangle chain is the first rule in the PREROUTING chain.
+		// Fix: In Calico established connections are accepted in the PREROUTING chain and though not further processed,
+		// which would bypass the rerouting of traffic to the gateway node. So our rule must be inserted before.
+		if len(rules) > 0 && (len(rules[0]) != 4 || rules[0][2] != "-j" || rules[0][3] != iptablesRTMarkChainName) {
+			m.logger.V(3).Info("Deleting conflicting mangle PREROUTING rule", "protocol", ipt.Protocol(), "rule", strings.Join(rules[0][2:], " "))
+			if _, err := ipt.DeleteRule(iptables.TableMangle, iptables.ChainPrerouting, rules[0][2:]...); err != nil {
+				return fmt.Errorf("failed to delete conflicting %s mangle PREROUTING rule: %w", ipt.Protocol(), err)
+			}
+		}
+		if _, err := ipt.EnsureRule(iptables.Prepend, iptables.TableMangle, iptables.ChainPrerouting, "-j", iptablesRTMarkChainName); err != nil {
 			return fmt.Errorf("failed to ensure %s mangle PREROUTING rule: %w", ipt.Protocol(), err)
 		}
 
