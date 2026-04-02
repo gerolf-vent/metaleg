@@ -143,6 +143,11 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to list %s mangle PREROUTING rules: %w", ipt.Protocol(), err)
 		}
 
+		// Ignore the policy rule if present
+		if len(rules) > 0 && rules[0][0] == "-P" {
+			rules = rules[1:]
+		}
+
 		// Ensure that the jump to our mangle chain is the first rule in the PREROUTING chain.
 		// Fix: In Calico established connections are accepted in the PREROUTING chain and though not further processed,
 		// which would bypass the rerouting of traffic to the gateway node. So our rule must be inserted before.
@@ -200,6 +205,10 @@ func (m *Manager) Setup() error {
 			return fmt.Errorf("failed to ensure %s NAT POSTROUTING rule: %w", ipt.Protocol(), err)
 		}
 
+		if err := m.ensureSNATSKipRule(ipt, iptables.TableNAT, iptables.ChainPrerouting, 1); err != nil {
+			return err
+		}
+
 		if err := m.ensureSNATSKipRule(ipt, iptables.TableNAT, iptables.ChainPostrouting, 1); err != nil {
 			return err
 		}
@@ -236,16 +245,42 @@ func (m *Manager) Purge() error {
 			errs = append(errs, fmt.Errorf("failed to delete %s NAT chain: %w", ipt.Protocol(), err))
 		}
 
-		postroutingRules, err := ipt.ListRules(iptables.TableNAT, iptables.ChainPostrouting)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to list %s NAT POSTROUTING rules: %w", ipt.Protocol(), err))
-		} else {
-			// Cleanup any SNAT-skip rules that are left over in the POSTROUTING chain.
-			for _, rule := range postroutingRules {
-				_, ok := ParseSNATSkipRule(rule[2:])
-				if ok {
-					if _, err := ipt.DeleteRule(iptables.TableNAT, iptables.ChainPostrouting, rule[2:]...); err != nil {
-						errs = append(errs, fmt.Errorf("failed to delete %s NAT SNAT-skip rule: %w", ipt.Protocol(), err))
+		for _, target := range []struct {
+			Table iptables.Table
+			Chain iptables.Chain
+		}{
+			{
+				Table: iptables.TableMangle,
+				Chain: iptables.ChainPrerouting,
+			},
+			{
+				Table: iptables.TableMangle,
+				Chain: iptables.ChainPostrouting,
+			},
+			{
+				Table: iptables.TableFilter,
+				Chain: iptables.ChainForward,
+			},
+			{
+				Table: iptables.TableNAT,
+				Chain: iptables.ChainPrerouting,
+			},
+			{
+				Table: iptables.TableNAT,
+				Chain: iptables.ChainPostrouting,
+			},
+		} {
+			rules, err := ipt.ListRules(target.Table, target.Chain)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to list %s %s rules: %w", ipt.Protocol(), target.Chain, err))
+			} else {
+				// Cleanup any SNAT-skip rules that are left over in the table/chain.
+				for _, rule := range rules {
+					_, ok := ParseSNATSkipRule(rule[2:])
+					if ok {
+						if _, err := ipt.DeleteRule(target.Table, target.Chain, rule[2:]...); err != nil {
+							errs = append(errs, fmt.Errorf("failed to delete %s %s %s SNAT-skip rule: %w", ipt.Protocol(), strings.ToUpper(string(target.Table)), strings.ToUpper(string(target.Chain)), err))
+						}
 					}
 				}
 			}
@@ -430,6 +465,11 @@ func (m *Manager) ensureSNATSKipRule(ipt iptables.IPTables, table iptables.Table
 		return fmt.Errorf("failed to list %s %s %s rules: %w", ipt.Protocol(), strings.ToUpper(string(table)), strings.ToUpper(string(chain)), err)
 	}
 
+	// Ignore the policy rule if present
+	if len(rules) > 0 && rules[0][0] == "-P" {
+		rules = rules[1:]
+	}
+
 	// Check if the our SNAT-skip rule is at desired index in the chain, otherwise cleanup existing duplicates,
 	// so we can create a new one at the index.
 	if len(rules) > index-1 {
@@ -447,7 +487,12 @@ func (m *Manager) ensureSNATSKipRule(ipt iptables.IPTables, table iptables.Table
 		}
 	}
 
-	if _, err := ipt.EnsureRule(iptables.InsertAt(index), table, chain, snatSkipRule.Spec()...); err != nil {
+	position := iptables.Prepend
+	if index > 1 {
+		position = iptables.InsertAt(index)
+	}
+
+	if _, err := ipt.EnsureRule(position, table, chain, snatSkipRule.Spec()...); err != nil {
 		return fmt.Errorf("failed to ensure %s %s %s rule: %w", ipt.Protocol(), strings.ToUpper(string(table)), strings.ToUpper(string(chain)), err)
 	}
 
