@@ -21,8 +21,9 @@ The controller is configured via environment variables:
 | NODE_NAME | - | Hostname of the K8s node the agent is running on |
 | METALLB_NAMESPACE | `metallb-system` | Namespace where MetalLB is running in |
 | FILTER_ENDPOINTS_FOR_NODE | `true` | Whether to only redirect traffic from pod ips on the same node or all pod ips. |
+| NODE_ADDRESS_TYPE | `internal` | Whether to use only `internal`, `external` or `any` node ips for traffic redirection. If you specify `any`, internal node ips are preferred to external ones, but both are considered. |
 | FIREWALL_BACKEND | `iptables` | Firewall backend to use for SNAT rules and marking packages |
-| FIREWALL_MASK | `0x00F00000` | Firewall mask to use for marking packages (must be continous) |
+| FIREWALL_MASK | `0x0F000000` | Firewall mask to use for marking packages (must be continous) |
 | FIREWALL_EXCLUDE_DST_CIDRS | `10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10` | Comma separated list of CIDRs to exclude from rerouting and masquerading (e.g. cluster pod/service CIDRs) |
 | ROUTE_BACKEND | `netlink` | Route backend to use for rerouting traffic to specific nodes |
 | ROUTE_TABLE_ID_OFFSET | `100000` | Starting point to allocate routing table ids |
@@ -37,6 +38,7 @@ The controller is configured via environment variables:
 | Name | Description |
 | ---- | ----------- |
 | `iptables` | Modern iptables backend that chooses `nf_tables` or legacy `ip_tables` under the hood automatically |
+| `iptables-legacy` | Legacy iptables backend |
 
 ### Route backends
 | Name | Description |
@@ -70,7 +72,8 @@ Because this controller currently uses firewall marks and routes on the standart
 | CNI | Status | Notes |
 | --- | ------ | ----- |
 | [kube-router](https://kube-router.io) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
-| [Cilium](https://cilium.io) | Not working |
+| [Calico](https://www.tigera.io/project-calico) | Tested and supported | If running in iptables mode: `iptables-legacy` firewall backend and `netlink` route backend recommended, also `iptablesMangleAllowAction` needs to be set to `Return` in [FelixConfig](https://docs.tigera.io/calico/latest/reference/resources/felixconfig). |
+| [Cilium](https://cilium.io) | Not working | |
 
 ## Testing
 For running all Go tests, you can use the `docker-compose.yaml` provided. It will start a container with all dependencies installed and the `NET_ADMIN` capability enabled (required for iptables/ipset tests). You can start the tests with `docker compose run --rm go-test` or `podman-compose up`.

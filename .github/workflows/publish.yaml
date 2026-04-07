@@ -19,15 +19,37 @@ jobs:
           mkdir -p ./build
       - id: manifest
         run: |
+          set -euo pipefail
+
           wget -qO ./build/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           chmod +x ./build/yq
-          VERSION="$(./build/yq eval '.package.version' ./container-image/melange.yaml)"
-          VERSION_1="$(echo "$VERSION" | cut -d. -f1)"
-          VERSION_2="$VERSION_1.$(echo "$VERSION" | cut -d. -f2)"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "version_1=$VERSION_1" >> $GITHUB_OUTPUT
+
+          IMAGE_NAME="$(./build/yq eval '.package.name' ./container-image/melange.yaml)"
+
+          VERSION_FULL="${GITHUB_REF_NAME#v}"
+          EPOCH="0"
+          if [[ "$VERSION_FULL" =~ ^(.+)-r([0-9]+)$ ]]; then
+            VERSION_FULL="${BASH_REMATCH[1]}"
+            EPOCH="${BASH_REMATCH[2]}"
+          fi
+
+          if [[ ! "$VERSION_FULL" =~ ^([0-9]+\.[0-9]+\.[0-9]+)([.-].*)?$ ]]; then
+            echo "Unsupported tag format: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          VERSION_3="${BASH_REMATCH[1]}"
+          VERSION_1="$(echo "$VERSION_3" | cut -d. -f1)"
+          VERSION_2="$VERSION_1.$(echo "$VERSION_3" | cut -d. -f2)"
+
+          VERSION="$VERSION_3" EPOCH="$EPOCH" ./build/yq eval -i '.package.version = strenv(VERSION) | .package.epoch = (strenv(EPOCH) | tonumber)' ./container-image/melange.yaml
+
+          echo "version_full=${VERSION_FULL}-r${EPOCH}" >> $GITHUB_OUTPUT
+          echo "version=$VERSION_FULL" >> $GITHUB_OUTPUT
+          echo "version_3=$VERSION_3" >> $GITHUB_OUTPUT
           echo "version_2=$VERSION_2" >> $GITHUB_OUTPUT
-          echo "version_full=$(./build/yq eval '.package.version + "-r" + (.package.epoch // 0)' ./container-image/melange.yaml)" >> $GITHUB_OUTPUT
+          echo "version_1=$VERSION_1" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
       - uses: chainguard-dev/actions/melange-build@v1.4.3
         id: melange
         with:
@@ -42,5 +64,5 @@ jobs:
         with:
           archs: amd64
           config: ./container-image/apko.yaml
-          tag: "ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_full }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_1 }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:${{ steps.manifest.outputs.version_2 }} ghcr.io/${{ github.repository_owner }}/metaleg-agent:latest"
+          tag: "ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:${{ steps.manifest.outputs.version_full }} ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:${{ steps.manifest.outputs.version }} ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:${{ steps.manifest.outputs.version_3 }} ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:${{ steps.manifest.outputs.version_2 }} ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:${{ steps.manifest.outputs.version_1 }} ghcr.io/${{ github.repository_owner }}/${{ steps.manifest.outputs.image_name }}:latest"
           keyring-append: ./build/melange.rsa.pub

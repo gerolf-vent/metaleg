@@ -1,0 +1,11 @@
+FROM alpine:latest
+
+RUN apk add --no-cache \
+    git \
+    go \
+    ipset \
+    iptables \
+    iptables-legacy \
+    iproute2
+
+CMD ["/bin/sh", "-c", "sleep infinity"]

@@ -42,11 +42,31 @@ func (e *CmdError) Error() string {
 	return fmt.Sprintf("Command %q failed with exit code %d: %s", e.cmd, e.ExitCode(), e.msg)
 }
 
-type IPSet struct {
+// IPSet defines the interface for ipset operations
+type IPSet interface {
+	ListSets() ([]string, error)
+	SetExists(name string) (bool, error)
+	EnsureSet(name string, proto Protocol) (bool, error)
+	DeleteSet(name string) (bool, error)
+	ListEntries(setName string) ([]net.IP, error)
+	EntryExists(setName string, entry net.IP) (bool, error)
+	EnsureEntry(setName string, entry net.IP) (bool, error)
+	DeleteEntry(setName string, entry net.IP) (bool, error)
+	NetworkSetExists(name string) (bool, error)
+	EnsureNetworkSet(name string, proto Protocol) (bool, error)
+	DeleteNetworkSet(name string) (bool, error)
+	NetworkEntryExists(name string, cidr net.IPNet) (bool, error)
+	ListNetworkEntries(setName string) ([]net.IPNet, error)
+	EnsureNetworkEntry(setName string, cidr *net.IPNet) (bool, error)
+	DeleteNetworkEntry(setName string, cidr *net.IPNet) (bool, error)
+}
+
+// ipSet represents the concrete implementation of ipset operations
+type ipSet struct {
 	path string
 }
 
-func New() (*IPSet, error) {
+func New() (IPSet, error) {
 	var path string
 	var err error
 
@@ -55,26 +75,41 @@ func New() (*IPSet, error) {
 		return nil, err
 	}
 
-	ipset := &IPSet{
+	ipset := &ipSet{
 		path: path,
 	}
 
 	return ipset, nil
 }
 
-func (ips *IPSet) SetExists(name string) (bool, error) {
+func (ips *ipSet) ListSets() ([]string, error) {
+	args := []string{"list", "-n"}
+
+	stdout := &bytes.Buffer{}
+	err := ips.runWithOutput(args, stdout)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := strings.FieldsFunc(stdout.String(), func(r rune) bool {
+		return r == '\n' || r == '\r'
+	})
+	return entries, nil
+}
+
+func (ips *ipSet) SetExists(name string) (bool, error) {
 	return ips.setExists(name)
 }
 
-func (ips *IPSet) EnsureSet(name string, proto Protocol) (bool, error) {
+func (ips *ipSet) EnsureSet(name string, proto Protocol) (bool, error) {
 	return ips.ensureSet(name, proto, "hash:ip")
 }
 
-func (ips *IPSet) DeleteSet(name string) (bool, error) {
+func (ips *ipSet) DeleteSet(name string) (bool, error) {
 	return ips.deleteSet(name)
 }
 
-func (ips *IPSet) ListEntries(setName string) ([]net.IP, error) {
+func (ips *ipSet) ListEntries(setName string) ([]net.IP, error) {
 	entries, err := ips.listEntries(setName, "hash:ip")
 	if err != nil {
 		return nil, err
@@ -90,35 +125,35 @@ func (ips *IPSet) ListEntries(setName string) ([]net.IP, error) {
 	return ipEntries, nil
 }
 
-func (ips *IPSet) EntryExists(setName string, entry net.IP) (bool, error) {
+func (ips *ipSet) EntryExists(setName string, entry net.IP) (bool, error) {
 	return ips.entryExists(setName, entry.String())
 }
 
-func (ips *IPSet) EnsureEntry(setName string, entry net.IP) (bool, error) {
+func (ips *ipSet) EnsureEntry(setName string, entry net.IP) (bool, error) {
 	return ips.ensureEntry(setName, entry.String())
 }
 
-func (ips *IPSet) DeleteEntry(setName string, entry net.IP) (bool, error) {
+func (ips *ipSet) DeleteEntry(setName string, entry net.IP) (bool, error) {
 	return ips.deleteEntry(setName, entry.String())
 }
 
-func (ips *IPSet) NetworkSetExists(name string) (bool, error) {
+func (ips *ipSet) NetworkSetExists(name string) (bool, error) {
 	return ips.setExists(name)
 }
 
-func (ips *IPSet) EnsureNetworkSet(name string, proto Protocol) (bool, error) {
+func (ips *ipSet) EnsureNetworkSet(name string, proto Protocol) (bool, error) {
 	return ips.ensureSet(name, proto, "hash:net")
 }
 
-func (ips *IPSet) DeleteNetworkSet(name string) (bool, error) {
+func (ips *ipSet) DeleteNetworkSet(name string) (bool, error) {
 	return ips.deleteSet(name)
 }
 
-func (ips *IPSet) NetworkEntryExists(name string, cidr net.IPNet) (bool, error) {
+func (ips *ipSet) NetworkEntryExists(name string, cidr net.IPNet) (bool, error) {
 	return ips.entryExists(name, cidr.String())
 }
 
-func (ips *IPSet) ListNetworkEntries(setName string) ([]net.IPNet, error) {
+func (ips *ipSet) ListNetworkEntries(setName string) ([]net.IPNet, error) {
 	entries, err := ips.listEntries(setName, "hash:net")
 	if err != nil {
 		return nil, err
@@ -134,15 +169,15 @@ func (ips *IPSet) ListNetworkEntries(setName string) ([]net.IPNet, error) {
 	return cidrEntries, nil
 }
 
-func (ips *IPSet) EnsureNetworkEntry(setName string, cidr *net.IPNet) (bool, error) {
+func (ips *ipSet) EnsureNetworkEntry(setName string, cidr *net.IPNet) (bool, error) {
 	return ips.ensureEntry(setName, cidr.String())
 }
 
-func (ips *IPSet) DeleteNetworkEntry(setName string, cidr *net.IPNet) (bool, error) {
+func (ips *ipSet) DeleteNetworkEntry(setName string, cidr *net.IPNet) (bool, error) {
 	return ips.deleteEntry(setName, cidr.String())
 }
 
-func (ips *IPSet) setExists(name string) (bool, error) {
+func (ips *ipSet) setExists(name string) (bool, error) {
 	args := []string{"list", name}
 	err := ips.run(args)
 	if err != nil {
@@ -154,7 +189,7 @@ func (ips *IPSet) setExists(name string) (bool, error) {
 	return true, nil
 }
 
-func (ips *IPSet) ensureSet(name string, proto Protocol, setType string) (bool, error) {
+func (ips *ipSet) ensureSet(name string, proto Protocol, setType string) (bool, error) {
 	args := []string{"create", name, setType, "family", string(proto), "timeout", "0"}
 	err := ips.run(args)
 	if err != nil {
@@ -166,7 +201,7 @@ func (ips *IPSet) ensureSet(name string, proto Protocol, setType string) (bool, 
 	return false, nil
 }
 
-func (ips *IPSet) deleteSet(name string) (bool, error) {
+func (ips *ipSet) deleteSet(name string) (bool, error) {
 	args := []string{"destroy", name}
 	err := ips.run(args)
 	if err != nil {
@@ -178,7 +213,7 @@ func (ips *IPSet) deleteSet(name string) (bool, error) {
 	return false, nil
 }
 
-func (ips *IPSet) listEntries(setName string, expectedSetType string) ([]string, error) {
+func (ips *ipSet) listEntries(setName string, expectedSetType string) ([]string, error) {
 	args := []string{"list", "-o", "xml", setName}
 
 	stdout := &bytes.Buffer{}
@@ -208,7 +243,7 @@ func (ips *IPSet) listEntries(setName string, expectedSetType string) ([]string,
 	return entries, nil
 }
 
-func (ips *IPSet) entryExists(setName string, entry string) (bool, error) {
+func (ips *ipSet) entryExists(setName string, entry string) (bool, error) {
 	args := []string{"test", setName, entry}
 	err := ips.run(args)
 	if err != nil {
@@ -220,7 +255,7 @@ func (ips *IPSet) entryExists(setName string, entry string) (bool, error) {
 	return true, nil
 }
 
-func (ips *IPSet) ensureEntry(setName string, entry string) (bool, error) {
+func (ips *ipSet) ensureEntry(setName string, entry string) (bool, error) {
 	args := []string{"add", setName, entry}
 	err := ips.run(args)
 	if err != nil {
@@ -232,11 +267,11 @@ func (ips *IPSet) ensureEntry(setName string, entry string) (bool, error) {
 	return false, nil
 }
 
-func (ips *IPSet) deleteEntry(setName string, entry string) (bool, error) {
+func (ips *ipSet) deleteEntry(setName string, entry string) (bool, error) {
 	args := []string{"del", setName, entry}
 	err := ips.run(args)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if strings.Contains(err.Error(), "it's not added") {
 			return true, nil
 		}
 		return false, err
@@ -244,11 +279,11 @@ func (ips *IPSet) deleteEntry(setName string, entry string) (bool, error) {
 	return false, nil
 }
 
-func (ips *IPSet) run(args []string) error {
+func (ips *ipSet) run(args []string) error {
 	return ips.runWithOutput(args, nil)
 }
 
-func (ips *IPSet) runWithOutput(args []string, stdout io.Writer) error {
+func (ips *ipSet) runWithOutput(args []string, stdout io.Writer) error {
 	// Prepend the command path to arguments (as exec.Cmd expects the first argument to be the command itself)
 	args = append([]string{ips.path}, args...)
 

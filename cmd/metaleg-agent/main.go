@@ -1,20 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"time"
 
-	metaleg "github.com/gerolf-vent/metaleg/internal"
-	es "github.com/gerolf-vent/metaleg/internal/egress-service"
-	fm "github.com/gerolf-vent/metaleg/internal/firewall-manager"
-	rm "github.com/gerolf-vent/metaleg/internal/route-manager"
-	utils "github.com/gerolf-vent/metaleg/internal/utils"
+	"github.com/gerolf-vent/metaleg/internal/controller"
+	"github.com/gerolf-vent/metaleg/internal/core"
+	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,199 +36,105 @@ func main() {
 	zapOpts := zap.Options{
 		Development: devMode,
 	}
+	if devMode {
+		logLevelEnv := os.Getenv("LOG_LEVEL")
+		var logLevel int
+		var err error
+		if logLevelEnv == "" {
+			logLevel = -10 // Default to Debug level in development mode
+		} else {
+			logLevel, err = strconv.Atoi(logLevelEnv)
+			if err != nil {
+				panic("invalid LOG_LEVEL value, must be an integer")
+			}
+		}
+		zapOpts.Level = zapcore.Level(logLevel)
+	}
 	logger := zap.New(zap.UseFlagOptions(&zapOpts)).WithName("metaleg-agent")
 	ctrl.SetLogger(logger)
 
-	var err error
-
-	nodeName := os.Getenv("NODE_NAME")
-	if nodeName == "" {
-		logger.Error(nil, "NODE_NAME env var not set")
-	}
-
-	mlbNamespace := os.Getenv("METALLB_NAMESPACE")
-	if mlbNamespace == "" {
-		mlbNamespace = "metallb-system" // Default namespace for MetalLB
-	}
-
-	filterForNode := true
-	filterForNodeEnv := os.Getenv("FILTER_ENDPOINTS_FOR_NODE")
-	if filterForNodeEnv != "" {
-		filterForNode, err = strconv.ParseBool(filterForNodeEnv)
-		if err != nil {
-			logger.Error(err, "Failed to parse env var FILTER_ENDPOINTS_FOR_NODE", "value", filterForNodeEnv)
-			os.Exit(1)
-		}
-	}
-
-	fwMask := utils.FWMask(0x00F00000) // Default FW mask
-	fwMaskEnv := os.Getenv("FIREWALL_MASK")
-	if fwMaskEnv != "" {
-		fwMask, err = utils.ParseFWMask(fwMaskEnv)
-		if err != nil {
-			logger.Error(err, "Failed to parse env var FIREWALL_MASK", "value", fwMaskEnv)
-			os.Exit(1)
-		}
-	} else {
-		logger.Info("FIREWALL_MASK env var not set, using default value", "value", fwMask)
-	}
-
-	fwExcludeDstCIDRs := []net.IPNet{
-		// IPv4 private address spaces
-		{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
-		{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
-		{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
-		// IPv4 link-local addresses
-		{IP: net.IPv4(169, 254, 0, 0), Mask: net.CIDRMask(16, 32)},
-
-		// IPv6 unique local addresses
-		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
-		// IPv6 link-local addresses
-		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
-	}
-	fwExcludeDstCIDRsEnv := os.Getenv("FIREWALL_EXCLUDE_DST_CIDRS")
-	if fwExcludeDstCIDRsEnv != "" {
-		fwExcludeDstCIDRsEnvSplitted := strings.Split(fwExcludeDstCIDRsEnv, ",")
-		fwExcludeDstCIDRs = make([]net.IPNet, 0, len(fwExcludeDstCIDRsEnvSplitted))
-		for _, cidrStr := range fwExcludeDstCIDRsEnvSplitted {
-			_, cidr, err := net.ParseCIDR(strings.TrimSpace(cidrStr))
-			if err != nil {
-				logger.Error(err, "Failed to parse env var FIREWALL_EXCLUDE_DST_CIDRS", "value", cidrStr)
-				os.Exit(1)
-			}
-			fwExcludeDstCIDRs = append(fwExcludeDstCIDRs, *cidr)
-		}
-	}
-
-	fmBackend := os.Getenv("FIREWALL_BACKEND")
-	if fmBackend == "" {
-		fmBackend = "iptables" // Default firewall backend
-	}
-
-	var firewallManager fm.FirewallManager
-	switch fmBackend {
-	case "iptables":
-		firewallManager, err = fm.NewIPTablesManager(nodeName, uint32(fwMask), fwExcludeDstCIDRs)
-		if err != nil {
-			logger.Error(err, "Failed to create iptables manager")
-			os.Exit(1)
-		}
-	default:
-		logger.Error(nil, "Unsupported firewall manager backend", "backend", fmBackend)
+	// Load main configuration from environment variables
+	config, err := core.LoadConfig(context.Background())
+	if err != nil {
+		logger.Error(err, "Failed to load configuration from environment variables")
 		os.Exit(1)
 	}
 
-	routeTableIDOffset := uint64(100000) // Default route table ID offset
-	routeTableIDOffsetRaw := os.Getenv("ROUTE_TABLE_ID_OFFSET")
-	if routeTableIDOffsetRaw != "" {
-		routeTableIDOffset, err = strconv.ParseUint(routeTableIDOffsetRaw, 10, 32)
-		if err != nil {
-			logger.Error(err, "Invalid ROUTE_TABLE_ID_OFFSET")
-			os.Exit(1)
-		}
-	}
-
-	rmBackend := os.Getenv("ROUTE_BACKEND")
-	if rmBackend == "" {
-		rmBackend = "netlink" // Default route backend
-	}
-
-	var routeManager rm.RouteManager
-	switch rmBackend {
-	case "netlink":
-		routeManager, err = rm.NewNetlinkManager(fwMask, uint32(routeTableIDOffset))
-		if err != nil {
-			logger.Error(err, "Failed to create netlink manager")
-			os.Exit(1)
-		}
-	default:
-		logger.Error(nil, "Unsupported route manager backend", "backend", rmBackend)
+	// Load additional controller configuration
+	ctrlConfig, err := controller.LoadConfig(context.Background())
+	if err != nil {
+		logger.Error(err, "Failed to load controller configuration from environment variables")
 		os.Exit(1)
 	}
 
-	reconciliationInterval := time.Minute * 5 // Default reconciliation interval
-	reconciliationIntervalRaw := os.Getenv("RECONCILIATION_INTERVAL")
-	if reconciliationIntervalRaw != "" {
-		reconciliationInterval, err = time.ParseDuration(reconciliationIntervalRaw)
-		if err != nil {
-			logger.Error(err, "Invalid GC_INTERVAL")
-			os.Exit(1)
-		}
+	reconciler, err := controller.NewReconciler(config, logger)
+	if err != nil {
+		logger.Error(err, "Failed to create egress service")
+		os.Exit(1)
 	}
 
 	if *runCleanup {
-		logger.Info("Running in cleanup mode")
+		logger.Info("Running in purge mode")
 
 		exitCode := 0
 
-		if err := firewallManager.Cleanup(); err != nil {
-			logger.Error(err, "Failed to cleanup firewall rules")
+		if err := reconciler.Purge(); err != nil {
+			logger.Error(err, "Purge encountered errors")
 			exitCode = 1
+		} else {
+			logger.Info("Successfully completed purge")
 		}
 
-		if err := routeManager.Cleanup(); err != nil {
-			logger.Error(err, "Failed to cleanup route rules")
-			exitCode = 1
-		}
-
-		logger.Info("Cleanup finished, exiting")
 		os.Exit(exitCode)
-	}
-
-	metricsBindAddress := os.Getenv("METRICS_BIND_ADDRESS")
-	if metricsBindAddress == "" {
-		metricsBindAddress = ":21793" // Default metrics bind address
-	}
-
-	healthProbeBindAddress := os.Getenv("HEALTH_PROBE_BIND_ADDRESS")
-	if healthProbeBindAddress == "" {
-		healthProbeBindAddress = ":21794" // Default health probe bind address
 	}
 
 	cfg := ctrl.GetConfigOrDie()
 
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
-	discoveryv1.AddToScheme(scheme)
-	metallbv1beta1.AddToScheme(scheme)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add corev1 to scheme")
+		os.Exit(1)
+	}
+	if err := discoveryv1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add discoveryv1 to scheme")
+		os.Exit(1)
+	}
+	if err := metallbv1beta1.AddToScheme(scheme); err != nil {
+		logger.Error(err, "Failed to add metallbv1beta1 to scheme")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:         scheme,
 		LeaderElection: false, // this is a node agent, no leader election needed
 		Logger:         logger,
 		Metrics: metricsserver.Options{
-			BindAddress: metricsBindAddress,
+			BindAddress: ctrlConfig.MetricsBindAddress,
 		},
-		HealthProbeBindAddress: healthProbeBindAddress,
+		HealthProbeBindAddress: ctrlConfig.HealthProbeBindAddress,
 	})
 	if err != nil {
 		logger.Error(err, "Failed to create controller manager")
 		os.Exit(1)
 	}
 
-	es, err := es.New(nodeName, reconciliationInterval, firewallManager, routeManager)
-	if err != nil {
-		logger.Error(err, "Failed to create egress service")
-		os.Exit(1)
-	}
-
-	if err := mgr.Add(es); err != nil {
+	if err := mgr.Add(reconciler); err != nil {
 		logger.Error(err, "Failed to add egress service to manager")
 		os.Exit(1)
 	}
 
-	if err := metaleg.AttachNodeController(mgr, es); err != nil {
+	if err := controller.AttachNodeController(mgr, reconciler, ctrlConfig.NodeAddressType); err != nil {
 		logger.Error(err, "Failed to attach node controller")
 		os.Exit(1)
 	}
 
-	if err := metaleg.AttachServiceController(mgr, es, mlbNamespace, nodeName, filterForNode); err != nil {
+	if err := controller.AttachServiceController(mgr, reconciler, ctrlConfig); err != nil {
 		logger.Error(err, "Failed to attach service controller")
 		os.Exit(1)
 	}
 
 	if err := mgr.AddReadyzCheck("egress-service", func(req *http.Request) error {
-		if !es.IsReady() {
+		if !reconciler.IsReady() {
 			return errors.New("egress service not ready")
 		}
 		return nil
@@ -248,7 +150,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting agent", "nodeName", nodeName, "firewallMask", fwMask, "routeTableIDOffset", routeTableIDOffset, "firewallBackend", fmBackend, "routeBackend", rmBackend, "reconciliationInterval", reconciliationInterval, "filterEndpointsForNode", filterForNode, "firewallExcludeDstCIDRs", fwExcludeDstCIDRs)
+	logger.Info("Starting agent",
+		"nodeName", config.NodeName,
+		"fwBackend", config.FWBackend,
+		"fwMask", config.FWMask,
+		"fwExcludeDstCIDRs", config.FWExcludeDstCIDRs.String(),
+		"routeBackend", config.RouteBackend,
+		"routeTableIDOffset", config.RouteTableIDOffset,
+		"reconciliationInterval", config.ReconciliationInterval,
+		"filterEndpointsForNode", ctrlConfig.FilterEndpointsForNode,
+	)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		logger.Error(err, "Agent stopped unexpectedly")
 		os.Exit(1)

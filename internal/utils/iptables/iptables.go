@@ -65,12 +65,16 @@ const (
 	ChainForward     Chain = "FORWARD"
 )
 
-type RulePosition string
+type RulePosition []string
 
-const (
-	Prepend RulePosition = "-I"
-	Append  RulePosition = "-A"
+var (
+	Prepend RulePosition = []string{"-I"}
+	Append  RulePosition = []string{"-A"}
 )
+
+func InsertAt(index int) RulePosition {
+	return []string{"-I", fmt.Sprintf("%d", index)}
+}
 
 type CmdError struct {
 	*exec.ExitError
@@ -82,24 +86,47 @@ func (e *CmdError) Error() string {
 	return fmt.Sprintf("Command %q failed with exit code %d: %s", e.cmd, e.ExitCode(), e.msg)
 }
 
-type IPTables struct {
+// IPTables defines the interface for iptables operations
+type IPTables interface {
+	IsIPv6() bool
+	Protocol() Protocol
+	ChainExists(table Table, chain Chain) (bool, error)
+	EnsureChain(table Table, chain Chain) (bool, error)
+	FlushChain(table Table, chain Chain) error
+	DeleteChain(table Table, chain Chain) (bool, error)
+	RuleExists(table Table, chain Chain, rulespec ...string) (bool, error)
+	ListRules(table Table, chain Chain) ([][]string, error)
+	EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error)
+	DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error)
+}
+
+// ipTables represents the concrete implementation of iptables operations
+type ipTables struct {
 	sync.Mutex
 	path  string
 	proto Protocol
 }
 
-func New(proto Protocol) (*IPTables, error) {
+func New(proto Protocol, legacy bool) (IPTables, error) {
 	var path string
 	var err error
 
 	switch proto {
 	case IPv4:
-		path, err = exec.LookPath("iptables")
+		binName := "iptables"
+		if legacy {
+			binName = "iptables-legacy"
+		}
+		path, err = exec.LookPath(binName)
 		if err != nil {
 			return nil, fmt.Errorf("iptables executable not found: %w", err)
 		}
 	case IPv6:
-		path, err = exec.LookPath("ip6tables")
+		binName := "ip6tables"
+		if legacy {
+			binName = "ip6tables-legacy"
+		}
+		path, err = exec.LookPath(binName)
 		if err != nil {
 			return nil, fmt.Errorf("ip6tables executable not found: %w", err)
 		}
@@ -107,7 +134,7 @@ func New(proto Protocol) (*IPTables, error) {
 		return nil, os.ErrInvalid
 	}
 
-	ipt := &IPTables{
+	ipt := &ipTables{
 		path:  path,
 		proto: proto,
 	}
@@ -115,15 +142,15 @@ func New(proto Protocol) (*IPTables, error) {
 	return ipt, ipt.checkVersion()
 }
 
-func (ipt *IPTables) IsIPv6() bool {
+func (ipt *ipTables) IsIPv6() bool {
 	return ipt.proto == IPv6
 }
 
-func (ipt *IPTables) Protocol() Protocol {
+func (ipt *ipTables) Protocol() Protocol {
 	return ipt.proto
 }
 
-func (ipt *IPTables) ChainExists(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) ChainExists(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -139,7 +166,7 @@ func (ipt *IPTables) ChainExists(table Table, chain Chain) (bool, error) {
 	return true, nil
 }
 
-func (ipt *IPTables) EnsureChain(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) EnsureChain(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -155,7 +182,7 @@ func (ipt *IPTables) EnsureChain(table Table, chain Chain) (bool, error) {
 	return false, nil
 }
 
-func (ipt *IPTables) FlushChain(table Table, chain Chain) error {
+func (ipt *ipTables) FlushChain(table Table, chain Chain) error {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -168,7 +195,7 @@ func (ipt *IPTables) FlushChain(table Table, chain Chain) error {
 	return nil
 }
 
-func (ipt *IPTables) DeleteChain(table Table, chain Chain) (bool, error) {
+func (ipt *ipTables) DeleteChain(table Table, chain Chain) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -193,14 +220,14 @@ func (ipt *IPTables) DeleteChain(table Table, chain Chain) (bool, error) {
 	return false, nil
 }
 
-func (ipt *IPTables) RuleExists(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) RuleExists(table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
 	return ipt.check(table, chain, rulespec...)
 }
 
-func (ipt *IPTables) ListRules(table Table, chain Chain) ([][]string, error) {
+func (ipt *ipTables) ListRules(table Table, chain Chain) ([][]string, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -235,7 +262,7 @@ func (ipt *IPTables) ListRules(table Table, chain Chain) ([][]string, error) {
 	return rules, nil
 }
 
-func (ipt *IPTables) EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) EnsureRule(position RulePosition, table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -245,7 +272,11 @@ func (ipt *IPTables) EnsureRule(position RulePosition, table Table, chain Chain,
 	}
 
 	if !exists {
-		createArgs := append([]string{"-t", string(table), string(position), string(chain)}, rulespec...)
+		createArgs := []string{"-t", string(table)}
+		createArgs = append(createArgs, position[0])
+		createArgs = append(createArgs, string(chain))
+		createArgs = append(createArgs, position[1:]...)
+		createArgs = append(createArgs, rulespec...)
 		err = ipt.run(createArgs)
 		if err != nil {
 			return false, err
@@ -256,7 +287,7 @@ func (ipt *IPTables) EnsureRule(position RulePosition, table Table, chain Chain,
 	return true, nil
 }
 
-func (ipt *IPTables) DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) DeleteRule(table Table, chain Chain, rulespec ...string) (bool, error) {
 	ipt.Lock()
 	defer ipt.Unlock()
 
@@ -276,12 +307,12 @@ func (ipt *IPTables) DeleteRule(table Table, chain Chain, rulespec ...string) (b
 	return false, nil
 }
 
-func (ipt *IPTables) check(table Table, chain Chain, rulespec ...string) (bool, error) {
+func (ipt *ipTables) check(table Table, chain Chain, rulespec ...string) (bool, error) {
 	args := append([]string{"-t", string(table), "-C", string(chain)}, rulespec...)
 
 	err := ipt.run(args)
 	var exitErr *CmdError
-	if err != nil && strings.Contains(err.Error(), "Bad rule") {
+	if err != nil && (strings.Contains(err.Error(), "Bad rule") || strings.Contains(err.Error(), "No chain/target/match by that name")) {
 		return false, nil
 	} else if errors.As(err, &exitErr) {
 		if exitErr.ExitCode() == 2 { // Exit code 2 indicates that a dependency does not exist
@@ -294,7 +325,7 @@ func (ipt *IPTables) check(table Table, chain Chain, rulespec ...string) (bool, 
 	return true, err
 }
 
-func (ipt *IPTables) checkVersion() error {
+func (ipt *ipTables) checkVersion() error {
 	args := []string{"--version"}
 
 	stdout := &bytes.Buffer{}
@@ -321,11 +352,11 @@ func (ipt *IPTables) checkVersion() error {
 	return nil
 }
 
-func (ipt *IPTables) run(args []string) error {
+func (ipt *ipTables) run(args []string) error {
 	return ipt.runWithOutput(args, nil)
 }
 
-func (ipt *IPTables) runWithOutput(args []string, stdout io.Writer) error {
+func (ipt *ipTables) runWithOutput(args []string, stdout io.Writer) error {
 	// Prepend the command path to arguments (as exec.Cmd expects the first argument to be the command itself)
 	args = append([]string{ipt.path}, args...)
 
