@@ -72,8 +72,8 @@ Because this controller currently uses firewall marks and routes on the standart
 | CNI | Status | Notes |
 | --- | ------ | ----- |
 | [kube-router](https://kube-router.io) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
-| [Calico](https://www.tigera.io/project-calico) | Tested and supported | `iptables` firewall backend and `netlink` route backend recommended |
-| [Cilium](https://cilium.io) | Not working |
+| [Calico](https://www.tigera.io/project-calico) | Tested and supported | If running in iptables mode: `iptables-legacy` firewall backend and `netlink` route backend recommended, also `iptablesMangleAllowAction` needs to be set to `Return` in [FelixConfig](https://docs.tigera.io/calico/latest/reference/resources/felixconfig). |
+| [Cilium](https://cilium.io) | Not working | |
 
 ## Testing
 For running all Go tests, you can use the `docker-compose.yaml` provided. It will start a container with all dependencies installed and the `NET_ADMIN` capability enabled (required for iptables/ipset tests). You can start the tests with `docker compose run --rm go-test` or `podman-compose up`.
