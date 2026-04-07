@@ -1,13 +1,20 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+
 resources:
 - service-account.yaml
 - rbac.yaml
 - daemonset.yaml
+
 labels:
-  - pairs:
-      app.kubernetes.io/name: metaleg
-      app.kubernetes.io/version: "0.2.1"
-      app.kubernetes.io/component: agent
-    includeSelectors: true
+- pairs:
+    app.kubernetes.io/name: metaleg
+    app.kubernetes.io/component: agent
+  includeSelectors: true
+- pairs:
+    app.kubernetes.io/version: "0.2.1"
+
+images:
+- name: ghcr.io/gerolf-vent/metaleg-agent
+  newTag: "0.2.1"
