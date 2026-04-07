@@ -93,8 +93,8 @@ spec:
           mountPath: /run/xtables.lock
       terminationGracePeriodSeconds: 30
       priorityClassName: system-node-critical
-    volumes:
-    - name: xtables-lock
-      hostPath:
-        path: /run/xtables.lock
-        type: File
+      volumes:
+      - name: xtables-lock
+        hostPath:
+          path: /run/xtables.lock
+          type: File
